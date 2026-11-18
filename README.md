@@ -60,7 +60,13 @@ function that builds an expression and checks its arguments the way Power BI doe
 
 ```python
 from pythonic_dax import (
-    CALCULATE, COUNTROWS, DIVIDE, SUM, SUMMARIZECOLUMNS, USERELATIONSHIP, VAR,
+    CALCULATE,
+    COUNTROWS,
+    DIVIDE,
+    SUM,
+    SUMMARIZECOLUMNS,
+    USERELATIONSHIP,
+    VAR,
 )
 
 revenue = model.add_measure("Revenue", SUM(Exams["Fee"]), description="Billed revenue.")
@@ -70,8 +76,9 @@ billed = model.add_measure(
 )
 avg = model.add_measure(
     "Avg Revenue per Exam",
-    VAR(ValidExams=CALCULATE(COUNTROWS(Exams), Exams["VOID_FL"] == False))
-    .RETURN(lambda v: DIVIDE(revenue, v.ValidExams)),
+    VAR(ValidExams=CALCULATE(COUNTROWS(Exams), Exams["VOID_FL"] == False)).RETURN(
+        lambda v: DIVIDE(revenue, v.ValidExams)
+    ),
     display_name="Average Revenue per Exam",
 )
 print(avg.expression.to_dax())
