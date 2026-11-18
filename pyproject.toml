@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pythonic-dax"
+version = "0.0.1"
+description = "Python functions that behave exactly like DAX in Power BI, as a calculation engine for Streamlit apps."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Cody Holmes" }]
+dependencies = [
+    "polars>=1.20",
+]
+
+[project.optional-dependencies]
+pandas = ["pandas>=2.2", "pyarrow>=17"]
+streamlit = ["streamlit>=1.40"]
+dev = [
+    "pytest>=8.3",
+    "pyyaml>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pythonic_dax"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+# DAX function names are upper case on purpose (CALCULATE, SUMX, ...).
+ignore = ["N802"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pythonic_dax", "golden"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]
