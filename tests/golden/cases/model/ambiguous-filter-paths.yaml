@@ -1,0 +1,30 @@
+id: ambiguous-filter-paths
+description: >
+  Date filters Sales directly and also through Product. Power BI won't allow both
+  relationships to be active, because filters from Date would reach Sales by two
+  routes. The direct one has to be inactive and used through USERELATIONSHIP.
+source: documented
+reference: https://learn.microsoft.com/en-us/power-bi/transform-model/desktop-relationships-understand#relationship-path-ambiguity
+powerbi_version: null
+model:
+  tables:
+    Date:
+      columns: {DateKey: integer}
+      rows: [[1], [2]]
+    Product:
+      columns: {ProductKey: integer, LaunchDateKey: integer}
+      rows: [[10, 1], [20, 2]]
+    Sales:
+      columns: {ProductKey: integer, DateKey: integer}
+      rows: [[10, 1], [20, 2]]
+  relationships:
+    - from: Sales[ProductKey]
+      to: Product[ProductKey]
+    - from: Product[LaunchDateKey]
+      to: Date[DateKey]
+    - from: Sales[DateKey]
+      to: Date[DateKey]
+python: |
+  result = None
+expected:
+  error: {type: ModelError, message_matches: "more than one filter path"}

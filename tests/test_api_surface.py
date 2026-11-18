@@ -22,8 +22,8 @@ def test_not_supported_is_a_not_implemented_error() -> None:
 
 
 def test_model_methods_name_their_phase() -> None:
-    with pytest.raises(pdax.NotSupportedError, match="Phase 1"):
-        pdax.Model().add_table("Sales", None)
+    with pytest.raises(pdax.NotSupportedError, match="Phase 3"):
+        pdax.Model().evaluate(None)
 
 
 def test_planned_names_are_upper_case_dax_names() -> None:

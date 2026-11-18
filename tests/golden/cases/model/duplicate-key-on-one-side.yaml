@@ -1,0 +1,26 @@
+id: duplicate-key-on-one-side
+description: >
+  Power BI refuses a many-to-one relationship when the one side has duplicate keys.
+  Text keys are compared without case, so "A" and "a" count as duplicates.
+source: documented
+reference: https://learn.microsoft.com/en-us/power-bi/transform-model/desktop-create-and-manage-relationships
+powerbi_version: null
+model:
+  tables:
+    Customer:
+      columns: {Code: string, Name: string}
+      rows:
+        - [A, Alpha]
+        - [a, Also alpha]
+    Sales:
+      columns: {Code: string, Amount: decimal}
+      rows:
+        - [A, 1.0]
+        - [A, 2.0]
+  relationships:
+    - from: Sales[Code]
+      to: Customer[Code]
+python: |
+  result = None
+expected:
+  error: {type: ModelError, message_matches: "duplicate values"}

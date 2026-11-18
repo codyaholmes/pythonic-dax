@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 license = { text = "Proprietary" }
 authors = [{ name = "Cody Holmes" }]
 dependencies = [
-    "polars>=1.20",
+    "polars>=1.30",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +45,8 @@ ignore = ["N802"]
 known-first-party = ["pythonic_dax", "golden"]
 
 [tool.mypy]
-python_version = "3.11"
+# 3.12 because numpy's stubs (imported by polars) use 3.12 syntax.
+# ruff's py311 target keeps our own code 3.11-compatible.
+python_version = "3.12"
 strict = true
 files = ["src"]
