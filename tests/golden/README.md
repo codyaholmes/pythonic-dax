@@ -24,7 +24,7 @@ model:
 python: |                           # must assign `result`
   total = model.add_measure("Total Sales", SUM(Sales["Amount"]))
   result = model.evaluate(SUMMARIZECOLUMNS(Product["Color"], {"Total": total}))
-dax: |                              # the same query in DAX, to run in Power BI Desktop
+dax: |                              # what model.to_dax_query() prints for it (checked by a test)
   DEFINE MEASURE Sales[Total Sales] = SUM(Sales[Amount])
   EVALUATE SUMMARIZECOLUMNS('Product'[Color], "Total", [Total Sales])
 expected:
