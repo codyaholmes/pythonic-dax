@@ -24,18 +24,19 @@ model:
     - from: Sales[ProductKey]
       to: Product[ProductKey]
 python: |
-  total = model.add_measure("Total Sales", SUM(Sales["Amount"]))
+  total = model.add_measure("Total Sales", SUM(Sales["Amount"]), table="Sales")
   share = model.add_measure(
       "Share of All Products",
       DIVIDE(total, CALCULATE(total, ALL(Product))),
+      table="Sales",
   )
   result = model.evaluate(SUMMARIZECOLUMNS(Product["Color"], {"Share": share}))
 dax: |
   DEFINE
       MEASURE Sales[Total Sales] = SUM(Sales[Amount])
       MEASURE Sales[Share of All Products] =
-          DIVIDE([Total Sales], CALCULATE([Total Sales], ALL('Product')))
-  EVALUATE SUMMARIZECOLUMNS('Product'[Color], "Share", [Share of All Products])
+          DIVIDE([Total Sales], CALCULATE([Total Sales], ALL(Product)))
+  EVALUATE SUMMARIZECOLUMNS(Product[Color], "Share", [Share of All Products])
 expected:
   ordered: false
   columns:

@@ -25,11 +25,11 @@ model:
     - from: Sales[ProductKey]
       to: Product[ProductKey]
 python: |
-  total = model.add_measure("Total Sales", SUM(Sales["Amount"]))
+  total = model.add_measure("Total Sales", SUM(Sales["Amount"]), table="Sales")
   result = model.evaluate(SUMMARIZECOLUMNS(Product["Color"], {"Total": total}))
 dax: |
   DEFINE MEASURE Sales[Total Sales] = SUM(Sales[Amount])
-  EVALUATE SUMMARIZECOLUMNS('Product'[Color], "Total", [Total Sales])
+  EVALUATE SUMMARIZECOLUMNS(Product[Color], "Total", [Total Sales])
 expected:
   ordered: false
   columns:

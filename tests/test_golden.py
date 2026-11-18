@@ -7,12 +7,13 @@ mismatch with Power BI is a real failure.
 
 from __future__ import annotations
 
+import contextlib
 import re
 
 import pytest
 
 import pythonic_dax as pdax
-from golden.harness import Case, compare, discover_cases, run_case
+from golden.harness import Case, Run, compare, discover_cases, normalize_dax, run_case
 
 CASES = discover_cases()
 
@@ -35,3 +36,16 @@ def test_golden(case: Case) -> None:
     assert error is None, f"expected {error['type']} but the engine returned a result"
     problems = compare(result, case.expected)
     assert not problems, "\n".join(problems)
+
+
+DAX_CASES = [c for c in CASES if c.dax]
+
+
+@pytest.mark.parametrize("case", DAX_CASES, ids=[c.id for c in DAX_CASES])
+def test_golden_dax_matches_python(case: Case) -> None:
+    """The DAX the Python query prints is the DAX the case runs in Power BI Desktop."""
+    run = Run(model=pdax.Model())
+    with contextlib.suppress(pdax.NotSupportedError):
+        run_case(case, run)
+    assert run.queries, "the case's Python code never called model.evaluate()"
+    assert normalize_dax(run.queries[-1]) == normalize_dax(case.dax or "")

@@ -15,6 +15,7 @@ import polars as pl
 
 from ._names import NameMap
 from .errors import ModelError
+from .expr import PREC_ATOM, Expr, TableExpr, quote_name
 from .sources import Source
 from .types import DaxType
 
@@ -76,8 +77,10 @@ class _Metadata:
             setattr(self, key, value)
 
 
-class Column(_Metadata):
-    """A column of a model table."""
+class Column(_Metadata, Expr):
+    """A column of a model table, and a column reference in DAX expressions."""
+
+    is_column_ref = True
 
     _settable = frozenset(
         {
@@ -152,15 +155,24 @@ class Column(_Metadata):
 
     @property
     def ref(self) -> str:
-        """The column as DAX writes it, for example ``'Sales'[Amount]``."""
+        """The column as DAX writes it, for example ``Sales[Amount]``."""
         return f"{self.table.ref}[{self.name.replace(']', ']]')}]"
+
+    @property
+    def dax_type(self) -> DaxType:
+        return self.data_type
+
+    def _dax(self) -> tuple[str, int]:
+        return self.ref, PREC_ATOM
 
     def __repr__(self) -> str:
         return f"Column({self.ref}, {self.data_type.value})"
 
 
-class Table(_Metadata):
-    """A model table: its data, its columns and their metadata."""
+class Table(_Metadata, TableExpr):
+    """A model table: its data, its columns and their metadata. Also a table in DAX."""
+
+    is_table_ref = True
 
     _settable = frozenset({"description", "display_name", "is_hidden", "annotations"})
 
@@ -246,8 +258,11 @@ class Table(_Metadata):
 
     @property
     def ref(self) -> str:
-        """The table as DAX writes it, for example ``'Sales'``."""
-        return "'" + self.name.replace("'", "''") + "'"
+        """The table as DAX writes it: ``Sales``, or ``'Sales Order'`` when quotes are needed."""
+        return quote_name(self.name)
+
+    def _dax(self) -> tuple[str, int]:
+        return self.ref, PREC_ATOM
 
     def __repr__(self) -> str:
         return f"Table({self.ref}, {len(self)} rows, {len(self._columns)} columns)"
@@ -286,8 +301,10 @@ class Table(_Metadata):
         self._data = pl.DataFrame(series)
 
 
-class Measure(_Metadata):
-    """A named DAX expression evaluated in filter context."""
+class Measure(_Metadata, Expr):
+    """A named DAX expression evaluated in filter context, and a reference to it."""
+
+    is_measure_ref = True
 
     _settable = frozenset(
         {
@@ -326,6 +343,17 @@ class Measure(_Metadata):
     def ref(self) -> str:
         """The measure as DAX writes it, for example ``[Total Sales]``."""
         return "[" + self.name.replace("]", "]]") + "]"
+
+    @property
+    def dax_type(self) -> DaxType | None:
+        return getattr(self.expression, "dax_type", None)
+
+    def _dax(self) -> tuple[str, int]:
+        return self.ref, PREC_ATOM
+
+    def definition(self) -> str:
+        """The measure as a DAX definition: ``MEASURE Sales[Total] = SUM(Sales[Amount])``."""
+        return f"MEASURE {self.table.ref}{self.ref} = {self.expression.to_dax()}"
 
     def __repr__(self) -> str:
         return f"Measure({self.ref}, home table {self.table.ref})"

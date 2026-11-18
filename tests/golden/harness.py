@@ -165,10 +165,31 @@ def _identifier(table_name: str) -> str:
     return re.sub(r"\W", "_", table_name)
 
 
-def run_case(case: Case) -> pl.DataFrame:
-    """Build the model and run the case's Python code. Returns the ``result`` frame."""
+@dataclass
+class Run:
+    """What happened when a case ran: the model and the queries passed to evaluate()."""
+
+    model: pdax.Model
+    queries: list[str] = field(default_factory=list)
+
+
+def run_case(case: Case, run: Run | None = None) -> pl.DataFrame:
+    """Build the model and run the case's Python code. Returns the ``result`` frame.
+
+    Pass a :class:`Run` to record the DAX of every query the code evaluates.
+    """
     model = pdax.Model()
-    namespace: dict[str, Any] = {name: getattr(pdax, name) for name in pdax.PLANNED}
+    if run is not None:
+        run.model = model
+        real_evaluate = model.evaluate
+
+        def recording_evaluate(table_expression: Any, *args: Any, **kwargs: Any) -> Any:
+            order_by = kwargs.get("order_by", ())
+            run.queries.append(model.to_dax_query(table_expression, order_by=order_by))
+            return real_evaluate(table_expression, *args, **kwargs)
+
+        model.evaluate = recording_evaluate  # type: ignore[method-assign]
+    namespace: dict[str, Any] = {name: getattr(pdax, name) for name in pdax.__all__}
     namespace.update(pdax=pdax, model=model)
 
     for name, table in case.tables.items():
@@ -192,6 +213,11 @@ def run_case(case: Case) -> pl.DataFrame:
     if not isinstance(result, pl.DataFrame):
         raise TypeError(f"result must be a polars DataFrame, got {type(result).__name__}")
     return result
+
+
+def normalize_dax(text: str) -> str:
+    """DAX text with whitespace collapsed, for comparing queries."""
+    return " ".join(text.split())
 
 
 def _values_equal(actual: Any, expected: Any) -> bool:

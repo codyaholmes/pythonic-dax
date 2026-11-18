@@ -11,8 +11,12 @@ wins.
   `pythonic_dax.NotSupportedError` instead.
 - Every behavior change needs a golden case in `tests/golden/cases` (see its README).
   Prefer expected results captured from Power BI Desktop (`source: powerbi`).
-- When implementing a planned function, remove it from `src/pythonic_dax/_coverage.py`
-  and export the real one.
+- DAX function signatures live in `src/pythonic_dax/_specs.py`. After changing them,
+  run `python scripts/generate_functions.py` to regenerate `_functions.py` (a test
+  checks it's current). Functions with name/value pairs are hand-written in
+  `_special.py`.
+- `_coverage.py` maps each function to the phase that **evaluates** it. When a
+  function's evaluation is built, update its entry.
 - Polars is the storage backend. Pandas is accepted as input only.
 - Checks before pushing: `ruff check . && ruff format --check . && mypy && pytest`.
 - The plan, decisions, progress log and semantics notes live in Cody's Obsidian vault,

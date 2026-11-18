@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import Any
 
 import polars as pl
 
 from ._names import NameMap
-from .errors import ModelError, NotSupportedError
+from ._special import _orders
+from .errors import DaxError, ModelError, NotSupportedError
+from .expr import Keyword, _Omitted, coerce_any, columns_in, measures_in
 from .objects import (
     Cardinality,
     Column,
@@ -279,7 +282,10 @@ class Model:
         _check_name(name, "measure")
         if not self._tables:
             raise ModelError("add a table before adding measures: every measure has a home table")
-        home = self._tables[table] if isinstance(table, str) else (table or self.tables[0])
+        if isinstance(table, str):
+            home = self._tables[table]
+        else:
+            home = table if table is not None else self.tables[0]
         if self._tables.get(home.name) is not home:
             raise ModelError(f"{home.ref} is not a table of this model")
         if name in self._measures:
@@ -287,7 +293,15 @@ class Model:
         if name in home:
             raise ModelError(f"{home.ref} already has a column named {home[name].name!r}")
 
-        measure = Measure(self, name, expression, home)
+        node = coerce_any(expression)
+        if node.kind == "modifier":
+            raise DaxError(f"a measure can't be a CALCULATE modifier: {node.to_dax()}")
+        for col in columns_in(node):
+            if col.table.model is not self:
+                raise ModelError(f"{col.ref} belongs to a different model")
+        measure = Measure(self, name, node, home)
+        if any(m is measure for m in measures_in(node)):
+            raise DaxError(f"A circular dependency was detected: {measure.ref}")
         measure.set(
             description=description,
             display_name=display_name,
@@ -307,6 +321,38 @@ class Model:
     def __getitem__(self, name: str) -> Measure:
         """Look up a measure by name, ignoring case: ``model["Total Sales"]``."""
         return self._measures[name]
+
+    def to_dax_query(
+        self,
+        table_expression: Any,
+        order_by: Sequence[Any] = (),
+    ) -> str:
+        """The DAX query that :meth:`evaluate` runs, to paste into Power BI Desktop.
+
+        Includes a ``DEFINE MEASURE`` for every measure the query uses, so it runs as is
+        in DAX query view. ``order_by`` lists expressions, each optionally followed by
+        ``ASC`` or ``DESC``.
+        """
+        node = coerce_any(table_expression)
+        if node.kind != "table":
+            raise TypeError("EVALUATE needs a table expression, such as SUMMARIZECOLUMNS(...)")
+        lines: list[str] = []
+        order = {id(m): i for i, m in enumerate(self._measures)}
+        measures = sorted(measures_in(node), key=lambda m: order.get(id(m), len(order)))
+        if measures:
+            lines.append("DEFINE")
+            lines += [f"    {m.definition()}" for m in measures]
+        lines += ["EVALUATE", f"    {node.to_dax()}"]
+        if order_by:
+            keys = _orders("ORDER BY", tuple(order_by))
+            parts: list[str] = []
+            for key in keys:
+                if isinstance(key, Keyword):
+                    parts[-1] += f" {key.name}"
+                elif not isinstance(key, _Omitted):
+                    parts.append(key.to_dax())
+            lines += ["ORDER BY", "    " + ", ".join(parts)]
+        return "\n".join(lines)
 
     # --- evaluation (Phase 3) ---------------------------------------------------
 
@@ -353,7 +399,9 @@ class Model:
                     "is_hidden": c.is_hidden,
                     "data_category": c.data_category,
                     "summarize_by": c.summarize_by.value,
-                    "sort_by_column": c.sort_by_column.name if c.sort_by_column else None,
+                    "sort_by_column": (
+                        c.sort_by_column.name if c.sort_by_column is not None else None
+                    ),
                 }
                 for t in self._tables
                 for c in t.columns
