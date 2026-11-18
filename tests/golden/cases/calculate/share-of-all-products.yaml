@@ -1,0 +1,47 @@
+id: share-of-all-products
+description: >
+  CALCULATE with ALL(Product) removes every filter on Product, including the
+  blank row, so the denominator is the grand total of all sales (122.75).
+source: documented
+reference: https://learn.microsoft.com/en-us/dax/all-function-dax
+powerbi_version: null
+model:
+  tables:
+    Product:
+      columns: {ProductKey: integer, Color: string}
+      rows:
+        - [1, Red]
+        - [2, Green]
+        - [3, Blue]
+    Sales:
+      columns: {ProductKey: integer, Amount: decimal}
+      rows:
+        - [1, 10.0]
+        - [1, 5.5]
+        - [2, 7.25]
+        - [9, 100.0]
+  relationships:
+    - from: Sales[ProductKey]
+      to: Product[ProductKey]
+python: |
+  total = model.add_measure("Total Sales", SUM(Sales["Amount"]))
+  share = model.add_measure(
+      "Share of All Products",
+      DIVIDE(total, CALCULATE(total, ALL(Product))),
+  )
+  result = model.evaluate(SUMMARIZECOLUMNS(Product["Color"], {"Share": share}))
+dax: |
+  DEFINE
+      MEASURE Sales[Total Sales] = SUM(Sales[Amount])
+      MEASURE Sales[Share of All Products] =
+          DIVIDE([Total Sales], CALCULATE([Total Sales], ALL('Product')))
+  EVALUATE SUMMARIZECOLUMNS('Product'[Color], "Share", [Share of All Products])
+expected:
+  ordered: false
+  columns:
+    "Product[Color]": string
+    "[Share]": decimal
+  rows:
+    - [Red, 0.12627291242362526]
+    - [Green, 0.059063136456211814]
+    - [null, 0.814663951120163]

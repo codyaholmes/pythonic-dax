@@ -1,0 +1,41 @@
+id: summarizecolumns-basic
+description: >
+  Milestone M3. A measure grouped by a column on the one side of a relationship.
+  Colors with no sales (Blue) are dropped because the measure is BLANK. Sales whose
+  ProductKey has no match in Product (key 9) show up under the hidden blank row.
+source: documented
+reference: https://learn.microsoft.com/en-us/dax/summarizecolumns-function-dax
+powerbi_version: null
+model:
+  tables:
+    Product:
+      columns: {ProductKey: integer, Color: string}
+      rows:
+        - [1, Red]
+        - [2, Green]
+        - [3, Blue]
+    Sales:
+      columns: {ProductKey: integer, Amount: decimal}
+      rows:
+        - [1, 10.0]
+        - [1, 5.5]
+        - [2, 7.25]
+        - [9, 100.0]
+  relationships:
+    - from: Sales[ProductKey]
+      to: Product[ProductKey]
+python: |
+  total = model.add_measure("Total Sales", SUM(Sales["Amount"]))
+  result = model.evaluate(SUMMARIZECOLUMNS(Product["Color"], {"Total": total}))
+dax: |
+  DEFINE MEASURE Sales[Total Sales] = SUM(Sales[Amount])
+  EVALUATE SUMMARIZECOLUMNS('Product'[Color], "Total", [Total Sales])
+expected:
+  ordered: false
+  columns:
+    "Product[Color]": string
+    "[Total]": decimal
+  rows:
+    - [Red, 15.5]
+    - [Green, 7.25]
+    - [null, 100.0]
