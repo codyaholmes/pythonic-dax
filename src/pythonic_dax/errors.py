@@ -12,6 +12,14 @@ class DaxError(Exception):
     """An error Power BI itself would raise when evaluating the expression."""
 
 
+class ModelError(ValueError):
+    """The model is invalid, in a way Power BI would also refuse.
+
+    For example, a duplicate key on the one side of a relationship, or a second
+    active filter path between two tables.
+    """
+
+
 class NotSupportedError(NotImplementedError):
     """A DAX feature this library does not reproduce yet.
 
@@ -21,5 +29,5 @@ class NotSupportedError(NotImplementedError):
     def __init__(self, feature: str, phase: int | None = None) -> None:
         self.feature = feature
         self.phase = phase
-        where = f" (planned for Phase {phase})" if phase is not None else ""
+        where = " (planned for a later phase)" if phase is None else f" (planned for Phase {phase})"
         super().__init__(f"{feature} is not supported yet{where}.")

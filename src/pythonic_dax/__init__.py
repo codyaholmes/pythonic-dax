@@ -9,13 +9,40 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, NoReturn
 
+from . import sources
 from ._coverage import PLANNED
-from .errors import DaxError, NotSupportedError
+from .errors import DaxError, ModelError, NotSupportedError
 from .model import Model
+from .objects import (
+    Cardinality,
+    Column,
+    CrossFilter,
+    Measure,
+    Relationship,
+    SummarizeBy,
+    Table,
+)
+from .types import DaxType
 
 __version__ = "0.0.1"
 
-__all__ = ["PLANNED", "DaxError", "Model", "NotSupportedError", "__version__"]
+__all__ = [
+    "PLANNED",
+    "Cardinality",
+    "Column",
+    "CrossFilter",
+    "DaxError",
+    "DaxType",
+    "Measure",
+    "Model",
+    "ModelError",
+    "NotSupportedError",
+    "Relationship",
+    "SummarizeBy",
+    "Table",
+    "__version__",
+    "sources",
+]
 
 
 def _planned_stub(name: str, phase: int) -> Callable[..., NoReturn]:
