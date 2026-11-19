@@ -395,10 +395,13 @@ class Model:
                 if getattr(sub, "is_measure_ref", False) and id(sub) not in measures:
                     measures[id(sub)] = sub
                     visit(sub.expression)
-                elif getattr(sub, "is_column_ref", False) and sub.expression is not None:
-                    if id(sub) not in columns:
-                        columns[id(sub)] = sub
-                        visit(sub.expression)
+                elif (
+                    getattr(sub, "is_column_ref", False)
+                    and sub.expression is not None
+                    and id(sub) not in columns
+                ):
+                    columns[id(sub)] = sub
+                    visit(sub.expression)
 
         visit(node)
         m_order = {id(m): i for i, m in enumerate(self._measures)}
