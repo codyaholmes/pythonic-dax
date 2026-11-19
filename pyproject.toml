@@ -16,7 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 pandas = ["pandas>=2.2", "pyarrow>=17"]
-streamlit = ["streamlit>=1.40"]
+streamlit = ["streamlit>=1.40", "altair>=5"]
 dev = [
     "pytest>=8.3",
     "pyyaml>=6.0",
