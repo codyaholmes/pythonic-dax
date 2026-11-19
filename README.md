@@ -241,6 +241,39 @@ Date.mark_as_date_table("Date")  # optional, as in Power BI
   `tests/golden/cases/time-intelligence`, including the monthly year-to-date and
   prior-year report of milestone M7. `CALENDARAUTO` follows Microsoft's documentation.
 
+**Phase 8 (report layer and Streamlit) is built.**
+
+![The demo sales report](docs/sales-report.png)
+
+```bash
+pip install -e ".[streamlit]"
+streamlit run examples/sales_report/app.py
+```
+
+* **Works with any front end:** `pythonic_dax.report` turns slicer selections into
+  filters and runs visuals as `SUMMARIZECOLUMNS` queries, the way Power BI's report
+  canvas does. It returns Polars frames plus labels, tooltips and formatted text, and
+  doesn't import any UI framework. Use it from Dash, FastAPI, a notebook or anything
+  else.
+* **Streamlit add-on:** `pythonic_dax.streamlit` (installed with the `streamlit` extra)
+  caches the model across reruns and draws slicers (`dropdown`, `multiselect`,
+  `date_range`), cards, tables with a total row, and bar and line charts.
+* **Like a Power BI report:** a table's total row is the measure evaluated over
+  everything, not a sum of the rows. Clicking a bar or a table row filters the other
+  visuals (cross-filtering). Display names label fields, descriptions become help
+  tooltips, format strings format values, sort-by columns order rows, and hidden fields
+  stay out of field lists.
+
+```python
+import pythonic_dax.streamlit as pst
+
+report = pst.report(model)
+pst.multiselect(report, Customer["Region"])
+pst.card(report, model["Sales Amount"], delta=model["Sales YoY %"])
+pst.bar_chart(report, Date["Month"], model["Sales Amount"], key="by_month")
+pst.table(report, [Product["Product"]], [model["Sales Amount"], model["Margin %"]])
+```
+
 Every planned DAX function is now evaluated. Anything the engine can't reproduce
 exactly raises `NotSupportedError`. It never guesses at an answer that might differ
 from Power BI.

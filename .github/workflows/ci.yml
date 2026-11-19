@@ -19,7 +19,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install
-        run: pip install -e ".[dev,pandas]"
+        run: pip install -e ".[dev,pandas,streamlit]"
       - name: Lint
         run: |
           ruff check .
