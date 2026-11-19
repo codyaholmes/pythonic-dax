@@ -1519,12 +1519,20 @@ EVALUATED = (
 
 
 def _register() -> None:
+    from . import _window
     from ._iterators import SCALAR
     from ._tables import TABLES
 
     _SCALAR_FUNCTIONS.update(SCALAR)
+    _SCALAR_FUNCTIONS.update(_window.SCALAR)
     _TABLE_FUNCTIONS.update(TABLES)
+    _TABLE_FUNCTIONS.update(_window.TABLES)
 
 
 _register()
-EVALUATED = EVALUATED | frozenset(_SCALAR_FUNCTIONS) | frozenset(_TABLE_FUNCTIONS) | {"DATATABLE"}
+EVALUATED = (
+    EVALUATED
+    | frozenset(_SCALAR_FUNCTIONS)
+    | frozenset(_TABLE_FUNCTIONS)
+    | {"DATATABLE", "ORDERBY", "PARTITIONBY", "ROLLUPADDISSUBTOTAL"}
+)
