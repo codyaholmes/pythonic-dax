@@ -1,0 +1,41 @@
+id: comparisons
+description: 'Comparisons with BLANK: BLANK equals 0, empty text and FALSE with =, but only BLANK with
+  ==. Text compares without case, even with ==, and a trailing space makes text different.'
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+python: |
+  import datetime
+  from pythonic_dax.expr import coerce
+  result = model.evaluate(ROW(
+      "BlankEqZero", BLANK() == 0, "BlankEqEmpty", BLANK() == "", "BlankEqFalse", BLANK() == FALSE(),
+      "BlankStrictZero", BLANK().strict_eq(0), "BlankStrictBlank", BLANK().strict_eq(BLANK()),
+      "CaseEq", coerce("a") == "A", "CaseLt", coerce("a") < "B", "BlankLtOne", BLANK() < 1,
+      "BlankLtNeg", BLANK() < -1, "BlankNeZero", BLANK() != 0, "IntEqDec", coerce(1) == 1.0,
+      "BlankStrictEmpty", BLANK().strict_eq(""), "CaseStrict", coerce("a").strict_eq("A"),
+      "BlankLtDate", BLANK() < datetime.date(2020, 1, 1), "TrailingSpace", coerce("a") == "a ",
+  ))
+dax: |
+  EVALUATE
+      ROW("BlankEqZero", BLANK() = 0, "BlankEqEmpty", BLANK() = "", "BlankEqFalse", BLANK() = FALSE(), "BlankStrictZero", BLANK() == 0, "BlankStrictBlank", BLANK() == BLANK(), "CaseEq", "a" = "A", "CaseLt", "a" < "B", "BlankLtOne", BLANK() < 1, "BlankLtNeg", BLANK() < -1, "BlankNeZero", BLANK() <> 0, "IntEqDec", 1 = 1.0, "BlankStrictEmpty", BLANK() == "", "CaseStrict", "a" == "A", "BlankLtDate", BLANK() < DATE(2020, 1, 1), "TrailingSpace", "a" = "a ")
+expected:
+  ordered: false
+  columns:
+    '[BlankEqZero]': boolean
+    '[BlankEqEmpty]': boolean
+    '[BlankEqFalse]': boolean
+    '[BlankStrictZero]': boolean
+    '[BlankStrictBlank]': boolean
+    '[CaseEq]': boolean
+    '[CaseLt]': boolean
+    '[BlankLtOne]': boolean
+    '[BlankLtNeg]': boolean
+    '[BlankNeZero]': boolean
+    '[IntEqDec]': boolean
+    '[BlankStrictEmpty]': boolean
+    '[CaseStrict]': boolean
+    '[BlankLtDate]': boolean
+    '[TrailingSpace]': boolean
+  rows:
+  - [true, true, true, false, true, true, true, true, false, false, true, false,
+    true, true, false]

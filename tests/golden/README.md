@@ -69,3 +69,8 @@ expected:
   Learn, dax.guide or SQLBI. `powerbi` cases were run in Power BI Desktop, and record
   the version. We prefer `powerbi`, so once a documented case has been run in Desktop,
   switch it over.
+- **Capturing from Power BI:** run the case's `dax` text in Power BI Desktop against a
+  model with the same made-up tables (calculated columns can be query-scoped with
+  `DEFINE COLUMN`, which is what `to_dax_query` prints). Record the engine version, from
+  `$SYSTEM.DISCOVER_PROPERTIES` (`DBMSVersion`), as `powerbi_version`. Never copy real
+  data from a customer model into a case.

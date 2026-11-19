@@ -45,7 +45,8 @@ DAX_CASES = [c for c in CASES if c.dax]
 def test_golden_dax_matches_python(case: Case) -> None:
     """The DAX the Python query prints is the DAX the case runs in Power BI Desktop."""
     run = Run(model=pdax.Model())
-    with contextlib.suppress(pdax.NotSupportedError):
+    expected_error = Exception if case.expected.error else pdax.NotSupportedError
+    with contextlib.suppress(expected_error):
         run_case(case, run)
     assert run.queries, "the case's Python code never called model.evaluate()"
     assert normalize_dax(run.queries[-1]) == normalize_dax(case.dax or "")

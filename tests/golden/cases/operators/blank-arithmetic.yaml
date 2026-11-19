@@ -1,0 +1,38 @@
+id: blank-arithmetic
+description: BLANK in arithmetic. It acts as 0 in + and -, stays BLANK in * and when divided, and BLANK
+  + BLANK is BLANK. Each result keeps the type Power BI reports (whole numbers stay Int64; / and ^ give
+  Double).
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+python: |
+  from pythonic_dax.expr import coerce
+  result = model.evaluate(ROW(
+      "Plus", BLANK() + 1, "Times", BLANK() * 1, "MinusL", BLANK() - 1, "MinusR", 1 - BLANK(),
+      "DivL", BLANK() / 1, "DivBB", BLANK() / BLANK(), "PlusBB", BLANK() + BLANK(),
+      "Neg", -BLANK(), "PowL", BLANK() ** 2, "PowR", 2 ** BLANK(), "TimesBB", BLANK() * BLANK(),
+      "IntDiv", coerce(7) / 2, "BoolPlus", TRUE() + 1, "MinusBB", BLANK() - BLANK(), "IntPow", coerce(2) ** 3,
+  ))
+dax: |
+  EVALUATE
+      ROW("Plus", BLANK() + 1, "Times", BLANK() * 1, "MinusL", BLANK() - 1, "MinusR", 1 - BLANK(), "DivL", BLANK() / 1, "DivBB", BLANK() / BLANK(), "PlusBB", BLANK() + BLANK(), "Neg", -BLANK(), "PowL", BLANK() ^ 2, "PowR", 2 ^ BLANK(), "TimesBB", BLANK() * BLANK(), "IntDiv", 7 / 2, "BoolPlus", TRUE() + 1, "MinusBB", BLANK() - BLANK(), "IntPow", 2 ^ 3)
+expected:
+  ordered: false
+  columns:
+    '[Plus]': integer
+    '[Times]': integer
+    '[MinusL]': integer
+    '[MinusR]': integer
+    '[DivL]': decimal
+    '[DivBB]': decimal
+    '[PlusBB]': integer
+    '[Neg]': integer
+    '[PowL]': decimal
+    '[PowR]': decimal
+    '[TimesBB]': integer
+    '[IntDiv]': decimal
+    '[BoolPlus]': integer
+    '[MinusBB]': integer
+    '[IntPow]': decimal
+  rows:
+  - [1, null, -1, 1, null, null, null, null, null, 1, null, 3.5, 2, null, 8]

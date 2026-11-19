@@ -1,0 +1,83 @@
+id: blank-row-by-color
+description: Sales with an unknown or blank ProductKey land on Product's blank row, under the BLANK color.
+  COUNTROWS(Product) still doesn't count the blank row. Customer is filtered back through Sales because
+  that relationship filters both ways.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  total = model.add_measure("Total", SUM(Sales["Amount"]), table="Sales")
+  rows_p = model.add_measure("Rows P", COUNTROWS(Product), table="Sales")
+  dc_key = model.add_measure("DC Key", DISTINCTCOUNT(Product["ProductKey"]), table="Sales")
+  blank_keys = model.add_measure("Blank Keys", COUNTBLANK(Product["ProductKey"]), table="Sales")
+  customers = model.add_measure("Customers", COUNTROWS(Customer), table="Sales")
+  sales_rows = model.add_measure("Sales Rows", COUNTROWS(Sales), table="Sales")
+  result = model.evaluate(SUMMARIZECOLUMNS(Product["Color"], {
+      "Total": total, "RowsP": rows_p, "DCKey": dc_key, "BlankKeys": blank_keys,
+      "Customers": customers, "SalesRows": sales_rows,
+  }))
+dax: |
+  DEFINE
+      MEASURE Sales[Total] = SUM(Sales[Amount])
+      MEASURE Sales[Rows P] = COUNTROWS(Product)
+      MEASURE Sales[DC Key] = DISTINCTCOUNT(Product[ProductKey])
+      MEASURE Sales[Blank Keys] = COUNTBLANK(Product[ProductKey])
+      MEASURE Sales[Customers] = COUNTROWS(Customer)
+      MEASURE Sales[Sales Rows] = COUNTROWS(Sales)
+  EVALUATE
+      SUMMARIZECOLUMNS(Product[Color], "Total", [Total], "RowsP", [Rows P], "DCKey", [DC Key], "BlankKeys", [Blank Keys], "Customers", [Customers], "SalesRows", [Sales Rows])
+expected:
+  ordered: false
+  columns:
+    Product[Color]: string
+    '[Total]': decimal
+    '[RowsP]': integer
+    '[DCKey]': integer
+    '[BlankKeys]': integer
+    '[Customers]': integer
+    '[SalesRows]': integer
+  rows:
+  - [null, 101, 1, 1, null, 2, 2]
+  - [Red, 15.5, 1, 1, null, 2, 2]
+  - [Green, 7.25, 1, 1, null, 1, 1]
+  - [Blue, null, 1, 1, null, null, null]

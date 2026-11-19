@@ -1,0 +1,62 @@
+id: currency-arithmetic
+description: Fixed decimal (currency) arithmetic. Currency times a whole number or a decimal stays currency,
+  but currency times currency is a decimal. Adding a decimal gives a decimal. Currency divided by a number
+  stays currency, rounded to 4 places.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Prices:
+      columns:
+        Item: string
+        Price: currency
+        Qty: integer
+        Rate: decimal
+      rows:
+      - [A, 1.5, 2, 0.5]
+      - [B, 2.25, 3, 1.25]
+      - [C, 1, null, 3.0]
+python: |
+  P = Prices
+  model.add_column(P, "TimesInt", P["Price"] * P["Qty"])
+  model.add_column(P, "TimesDec", P["Price"] * P["Rate"])
+  model.add_column(P, "TimesCur", P["Price"] * P["Price"])
+  model.add_column(P, "PlusInt", P["Price"] + P["Qty"])
+  model.add_column(P, "PlusDec", P["Price"] + P["Rate"])
+  model.add_column(P, "DivInt", P["Price"] / 3)
+  model.add_column(P, "DivCur", P["Price"] / P["Price"])
+  model.add_column(P, "IntDivCur", P["Qty"] / P["Price"])
+  result = model.evaluate(SUMMARIZECOLUMNS(
+      P["Item"], P["TimesInt"], P["TimesDec"], P["TimesCur"], P["PlusInt"], P["PlusDec"],
+      P["DivInt"], P["DivCur"], P["IntDivCur"], {"Rows": COUNTROWS(P)},
+  ))
+dax: |
+  DEFINE
+      COLUMN Prices[TimesInt] = Prices[Price] * Prices[Qty]
+      COLUMN Prices[TimesDec] = Prices[Price] * Prices[Rate]
+      COLUMN Prices[TimesCur] = Prices[Price] * Prices[Price]
+      COLUMN Prices[PlusInt] = Prices[Price] + Prices[Qty]
+      COLUMN Prices[PlusDec] = Prices[Price] + Prices[Rate]
+      COLUMN Prices[DivInt] = Prices[Price] / 3
+      COLUMN Prices[DivCur] = Prices[Price] / Prices[Price]
+      COLUMN Prices[IntDivCur] = Prices[Qty] / Prices[Price]
+  EVALUATE
+      SUMMARIZECOLUMNS(Prices[Item], Prices[TimesInt], Prices[TimesDec], Prices[TimesCur], Prices[PlusInt], Prices[PlusDec], Prices[DivInt], Prices[DivCur], Prices[IntDivCur], "Rows", COUNTROWS(Prices))
+expected:
+  ordered: false
+  columns:
+    Prices[Item]: string
+    Prices[TimesInt]: currency
+    Prices[TimesDec]: currency
+    Prices[TimesCur]: decimal
+    Prices[PlusInt]: currency
+    Prices[PlusDec]: decimal
+    Prices[DivInt]: currency
+    Prices[DivCur]: decimal
+    Prices[IntDivCur]: decimal
+    '[Rows]': integer
+  rows:
+  - [A, 3, 0.75, 2.25, 3.5, 2, 0.5, 1, 1.3333333333333333, 1]
+  - [B, 6.75, 2.8125, 5.0625, 5.25, 3.5, 0.75, 1, 1.3333333333333333, 1]
+  - [C, null, 3, 1, 1, 4, 0.3333, 1, null, 1]

@@ -1,0 +1,29 @@
+id: calculated-columns-circular
+description: >
+  Two calculated columns in Sales that both use a measure (context transition). Sales has no
+  key column and isn't the one side of any relationship, so each column depends on all the
+  other columns of the table, and Power BI refuses the second one as a circular dependency.
+source: powerbi
+reference: Power BI Desktop, adding the columns to a model with made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns: {ProductKey: integer, Color: string}
+      rows:
+        - [1, Red]
+    Sales:
+      columns: {SaleID: integer, ProductKey: integer, Amount: decimal}
+      rows:
+        - [1, 1, 10.0]
+        - [2, 1, 5.5]
+  relationships:
+    - from: Sales[ProductKey]
+      to: Product[ProductKey]
+python: |
+  total = model.add_measure("Total", SUM(Sales["Amount"]), table="Sales")
+  model.add_column(Sales, "T1", total)
+  model.add_column(Sales, "T2", total + 1)
+  result = model.evaluate(ROW("x", 1))
+expected:
+  error: {type: DaxError, message_matches: "A circular dependency was detected: Sales\\[T2\\], Sales\\[T1\\], Sales\\[T2\\]"}
