@@ -1,0 +1,40 @@
+id: time-intelligence-calendarauto
+description: >-
+  CALENDARAUTO covers whole years from the first to the last date in the model's date columns (calculated
+  columns aren't counted). With a fiscal year end month of 6, the years run July to June.
+source: documented
+reference: https://learn.microsoft.com/en-us/dax/calendarauto-function-dax
+model:
+  tables:
+    Orders:
+      columns:
+        OrderID: integer
+        OrderDate: date
+        ShipDate: date
+      rows:
+      - [1, 2023-03-15, 2023-03-20]
+      - [2, 2024-02-10, 2024-08-01]
+  relationships: []
+python: |
+  auto = CALENDARAUTO()
+  fiscal = CALENDARAUTO(6)
+  result = model.evaluate(ROW({
+      "First": MINX(auto, auto["Date"]),
+      "Last": MAXX(auto, auto["Date"]),
+      "Days": COUNTROWS(auto),
+      "FiscalFirst": MINX(fiscal, fiscal["Date"]),
+      "FiscalLast": MAXX(fiscal, fiscal["Date"]),
+  }))
+dax: |
+  EVALUATE
+      ROW("First", MINX(CALENDARAUTO(), [Date]), "Last", MAXX(CALENDARAUTO(), [Date]), "Days", COUNTROWS(CALENDARAUTO()), "FiscalFirst", MINX(CALENDARAUTO(6), [Date]), "FiscalLast", MAXX(CALENDARAUTO(6), [Date]))
+expected:
+  ordered: false
+  columns:
+    '[First]': date
+    '[Last]': date
+    '[Days]': integer
+    '[FiscalFirst]': date
+    '[FiscalLast]': date
+  rows:
+  - [2023-01-01, 2024-12-31, 731, 2022-07-01, 2025-06-30]

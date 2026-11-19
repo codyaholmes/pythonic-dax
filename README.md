@@ -206,8 +206,44 @@ model.evaluate(INFO.VIEW.MEASURES())  # the model's measures as a table, as in P
 * **Checked against Power BI Desktop:** 8 golden cases with 308 values in
   `tests/golden/cases/library`.
 
-Anything else raises `NotSupportedError` naming the phase that brings it. The engine
-never guesses at an answer that might differ from Power BI.
+**Phase 7 (time intelligence) is done.**
+
+```python
+from pythonic_dax import CALCULATE, DATEADD, SAMEPERIODLASTYEAR, TOTALYTD, MONTH
+
+dates = Date["Date"]
+ytd = TOTALYTD(total, dates)  # resets each January 1
+fiscal_ytd = TOTALYTD(total, dates, year_end_date="6/30")
+prior_year = CALCULATE(total, SAMEPERIODLASTYEAR(dates))
+prior_month = CALCULATE(total, DATEADD(dates, -1, MONTH))
+Date.mark_as_date_table("Date")  # optional, as in Power BI
+```
+
+* **Functions:** `CALENDAR`, `CALENDARAUTO`, `DATESYTD`/`QTD`/`MTD`, `TOTALYTD`/`QTD`/`MTD`,
+  `SAMEPERIODLASTYEAR`, `DATEADD`, `PARALLELPERIOD`, `DATESINPERIOD`, `DATESBETWEEN`,
+  `PREVIOUS`/`NEXT` day, month, quarter and year, `FIRSTDATE`, `LASTDATE`,
+  `STARTOF`/`ENDOF` month, quarter and year, and the `OPENINGBALANCE`/`CLOSINGBALANCE`
+  functions.
+* **Date filters clear their table:** a CALCULATE filter on a Date/Time column that is
+  the one side of a relationship, or the date column of a marked date table, removes the
+  other filters on that table, as in Power BI. So a year-to-date measure works in a
+  report by month without `ALL(Date)`. KEEPFILTERS filters don't do this.
+* **Month ends and leap days as in Power BI:** `DATEADD` of February 2024 back a year is
+  all of February 2023; a range ending on a month's last day shifts to the end of the
+  target month, a single date doesn't. `DATESINPERIOD` from a month's last day counts
+  whole months.
+* **Refused rather than guessed:** year ends that aren't the last day of a month (or are
+  in February), fiscal year ends for `STARTOFYEAR`, `PREVIOUSYEAR`, `NEXTYEAR` and
+  `OPENINGBALANCEYEAR`, dates with times of day, table expressions as the dates argument
+  (other than another time intelligence function), and `DATEADD` of scattered dates
+  that include neighbours.
+* **Checked against Power BI Desktop:** 8 golden cases with 979 values in
+  `tests/golden/cases/time-intelligence`, including the monthly year-to-date and
+  prior-year report of milestone M7. `CALENDARAUTO` follows Microsoft's documentation.
+
+Every planned DAX function is now evaluated. Anything the engine can't reproduce
+exactly raises `NotSupportedError`. It never guesses at an answer that might differ
+from Power BI.
 
 ## Development
 

@@ -9,6 +9,7 @@ whose columns remember the model column they came from).
 from __future__ import annotations
 
 import datetime as dt
+import re
 from collections.abc import Callable
 from dataclasses import replace
 from decimal import Decimal
@@ -173,6 +174,9 @@ def datatable(ev: Evaluator, node: Any, ctx: Context) -> Frame:
     return Frame(columns, rows)
 
 
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
 def _datatable_value(dax_type: Any, literal: Literal_) -> Value:
     v = literal.value
     if v is None:
@@ -189,6 +193,8 @@ def _datatable_value(dax_type: Any, literal: Literal_) -> Value:
         return v
     if dax_type is DaxType.DATETIME and isinstance(v, dt.date):
         return v if isinstance(v, dt.datetime) else dt.datetime(v.year, v.month, v.day)
+    if dax_type is DaxType.DATETIME and isinstance(v, str) and _ISO_DATE.fullmatch(v):
+        return dt.datetime.fromisoformat(v)  # "2024-03-05": the only text form verified
     raise NotSupportedError(f"DATATABLE value {v!r} in a {dax_type} column")
 
 

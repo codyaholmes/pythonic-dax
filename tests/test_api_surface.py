@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import datetime as dt
 import subprocess
 import sys
 from pathlib import Path
 
-import polars as pl
 import pytest
 
 import pythonic_dax as pdax
@@ -25,11 +23,15 @@ def test_not_supported_is_a_not_implemented_error() -> None:
     assert issubclass(pdax.NotSupportedError, NotImplementedError)
 
 
-def test_unbuilt_function_names_its_phase() -> None:
-    model = pdax.Model()
-    t = model.add_table("T", pl.DataFrame({"d": [dt.datetime(2024, 1, 1)], "x": [1]}))
-    with pytest.raises(pdax.NotSupportedError, match="Phase 7"):
-        model.evaluate(pdax.ROW("v", pdax.TOTALYTD(pdax.SUM(t["x"]), t["d"])))
+def test_every_planned_function_is_evaluated() -> None:
+    from pythonic_dax._evaluate import EVALUATED
+
+    operators = {"IN", "VAR"}  # written as Python operators and helpers, not calls
+    assert [n for n in pdax.PLANNED if n not in EVALUATED and n not in operators] == []
+
+
+def test_not_supported_names_its_phase() -> None:
+    assert "Phase 8" in str(pdax.NotSupportedError("X", 8))
 
 
 def test_planned_names_are_upper_case_dax_names() -> None:

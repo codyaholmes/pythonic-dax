@@ -44,6 +44,24 @@ expected:
   error: {type: DaxError, message_matches: "cannot convert"}
 ```
 
+### Date tables
+
+A table can be a generated calendar instead of listing its rows, and can be marked as a
+date table:
+
+```yaml
+model:
+  tables:
+    Dates:
+      calendar: {start: 2023-01-01, end: 2024-12-31}
+      date_table: Date              # optional: Mark as date table, on this column
+```
+
+The calendar has one row per day, with columns `Date` (date), `Year`, `Quarter`,
+`MonthNo` (integers) and `Month` (text such as `2024-03`). In Power BI it is the
+calculated table `ADDCOLUMNS(CALENDAR(<start>, <end>), "Year", YEAR([Date]), "Quarter",
+QUARTER([Date]), "MonthNo", MONTH([Date]), "Month", FORMAT([Date], "yyyy-mm"))`.
+
 ### Types
 
 | Case type | DAX type | Polars dtype |

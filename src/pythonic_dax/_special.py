@@ -7,6 +7,7 @@ Name/expression pairs can be written as DAX does (``"Total", total``) or as a di
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Iterator
 from typing import Any
 
@@ -393,8 +394,19 @@ class _DataTable(TableExpr):
 
     def _dax(self) -> tuple[str, int]:
         cols = ", ".join(f'"{n}", {t}' for n, t in self.columns)
-        rows = ", ".join("{" + ", ".join(v.to_dax() for v in r) + "}" for r in self.rows)
+        rows = ", ".join("{" + ", ".join(_constant(v) for v in r) + "}" for r in self.rows)
         return f"DATATABLE({cols}, {{{rows}}})", 100
+
+
+def _constant(node: Node) -> str:
+    """A DATATABLE value as DAX. Dates are written as text, "2024-03-05", since DATATABLE
+    takes only constants."""
+    value = getattr(node, "value", None)
+    if isinstance(value, dt.datetime) and value.time() != dt.time():
+        return f'"{value:%Y-%m-%d %H:%M:%S}"'
+    if isinstance(value, dt.date):
+        return f'"{value:%Y-%m-%d}"'
+    return node.to_dax()
 
 
 def DATATABLE(columns: dict[str, Any], rows: list[list[Any]]) -> TableExpr:
