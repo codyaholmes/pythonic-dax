@@ -74,8 +74,9 @@ def test_column_without_row_context_is_an_error(model: pdax.Model) -> None:
 
 
 def test_unbuilt_functions_raise_not_supported(model: pdax.Model) -> None:
-    with pytest.raises(pdax.NotSupportedError, match="Phase 4"):
-        value(model, pdax.CALCULATE(SUM(model.table("Sales")["Amount"])))
+    sales = model.table("Sales")
+    with pytest.raises(pdax.NotSupportedError, match="Phase 5"):
+        value(model, pdax.SUMX(sales, sales["Amount"]))
 
 
 # --- variables --------------------------------------------------------------------------
@@ -220,3 +221,71 @@ def test_comparing_text_with_numbers_is_an_error() -> None:
 def test_zero_divided_by_blank_is_nan() -> None:
     result = sc.arithmetic("/", 0, None)
     assert result != result  # NaN
+
+
+# --- CALCULATE (Phase 4) -------------------------------------------------------------
+
+
+def test_new_filters_in_one_calculate_intersect(model: pdax.Model) -> None:
+    product = model.table("Product")
+    color = product["Color"]
+    red = ColumnFilter(product, [color], pl.DataFrame({"Color": ["Red"]}))
+    blue = ColumnFilter(product, [color], pl.DataFrame({"Color": ["Blue"]}))
+    ctx = FilterContext().apply([red, blue])
+    assert len(ctx.filters) == 2
+
+
+def test_boolean_filter_fast_path_matches_row_by_row(model: pdax.Model) -> None:
+    sales = model.table("Sales")
+    total = model.add_measure("Total", SUM(sales["Amount"]), table=sales)
+    fast = pdax.CALCULATE(total, sales["Amount"] > 4)
+    slow = pdax.CALCULATE(total, IF(sales["Amount"] > 4, True, False))  # not vectorized
+    assert value(model, fast) == value(model, slow) == 115.0
+
+
+def test_allselected_needs_an_iteration(model: pdax.Model) -> None:
+    sales = model.table("Sales")
+    expr = pdax.CALCULATE(SUM(sales["Amount"]), pdax.ALLSELECTED())
+    with pytest.raises(pdax.NotSupportedError, match="ALLSELECTED"):
+        value(model, expr)
+
+
+def test_keepfilters_of_all_is_refused(model: pdax.Model) -> None:
+    sales, product = model.table("Sales"), model.table("Product")
+    expr = pdax.CALCULATE(SUM(sales["Amount"]), pdax.KEEPFILTERS(pdax.ALL(product["Color"])))
+    with pytest.raises(pdax.NotSupportedError, match="KEEPFILTERS"):
+        value(model, expr)
+
+
+def test_expansion_through_an_inactive_relationship_is_refused() -> None:
+    m = pdax.Model()
+    region = m.add_table("Region", pl.DataFrame({"R": [1, 2]}))
+    store = m.add_table("Store", pl.DataFrame({"S": [1], "R": [1], "R2": [2]}))
+    m.add_relationship(store["R2"], region["R"], active=False)
+    expr = pdax.CALCULATE(COUNTROWS(region), pdax.REMOVEFILTERS(store))
+    with pytest.raises(pdax.NotSupportedError, match="inactive relationship"):
+        m.evaluate(ROW("v", expr))
+
+
+def test_crossfilter_on_an_inactive_relationship_is_refused() -> None:
+    m = pdax.Model()
+    one = m.add_table("One", pl.DataFrame({"k": [1, 2]}))
+    many = m.add_table("Many", pl.DataFrame({"k": [1], "j": [2]}))
+    m.add_relationship(many["k"], one["k"])
+    m.add_relationship(many["j"], one["k"], active=False)
+    expr = pdax.CALCULATE(COUNTROWS(one), pdax.CROSSFILTER(many["j"], one["k"], "BOTH"))
+    with pytest.raises(pdax.NotSupportedError, match="inactive"):
+        m.evaluate(ROW("v", expr))
+
+
+def test_lookupvalue_blank_search_is_refused(model: pdax.Model) -> None:
+    product = model.table("Product")
+    expr = pdax.LOOKUPVALUE(product["Color"], product["ProductKey"], BLANK())
+    with pytest.raises(pdax.NotSupportedError, match="BLANK"):
+        value(model, expr)
+
+
+def test_table_constructor_as_a_table(model: pdax.Model) -> None:
+    result = model.evaluate(pdax.TREATAS([1, 2], model.table("Product")["ProductKey"]))
+    assert result.columns == ["Product[ProductKey]"]
+    assert result["Product[ProductKey]"].to_list() == [1, 2]

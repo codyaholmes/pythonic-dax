@@ -1,0 +1,76 @@
+id: lookupvalue
+description: >-
+  LOOKUPVALUE ignores filters on the lookup table's expanded table (so the grouped color doesn't matter
+  for Product or Sales), but a filter that reaches the table through a two-way relationship still applies,
+  as for Customer. Text search ignores case.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  total = model.add_measure("Total", SUM(Sales["Amount"]), table="Sales")
+  result = model.evaluate(SUMMARIZECOLUMNS(Product["Color"], {
+      "Total": total,
+      "Lookup": LOOKUPVALUE(Product["Color"], Product["ProductKey"], 1),
+      "NoMatch": LOOKUPVALUE(Product["Color"], Product["ProductKey"], 99, "none"),
+      "AnyCase": LOOKUPVALUE(Customer["Name"], Customer["Name"], "ann"),
+      "TwoKeys": LOOKUPVALUE(Sales["Amount"], Sales["ProductKey"], 1, Sales["CustomerKey"], 2),
+  }))
+dax: |
+  DEFINE
+      MEASURE Sales[Total] = SUM(Sales[Amount])
+  EVALUATE
+      SUMMARIZECOLUMNS(Product[Color], "Total", [Total], "Lookup", LOOKUPVALUE(Product[Color], Product[ProductKey], 1), "NoMatch", LOOKUPVALUE(Product[Color], Product[ProductKey], 99, "none"), "AnyCase", LOOKUPVALUE(Customer[Name], Customer[Name], "ann"), "TwoKeys", LOOKUPVALUE(Sales[Amount], Sales[ProductKey], 1, Sales[CustomerKey], 2))
+expected:
+  ordered: false
+  columns:
+    Product[Color]: string
+    '[Total]': decimal
+    '[Lookup]': string
+    '[NoMatch]': string
+    '[AnyCase]': string
+    '[TwoKeys]': decimal
+  rows:
+  - [null, 101, Red, none, null, 5.5]
+  - [Red, 15.5, Red, none, Ann, 5.5]
+  - [Green, 7.25, Red, none, Ann, 5.5]
+  - [Blue, null, Red, none, null, 5.5]

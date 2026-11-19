@@ -1,0 +1,56 @@
+id: crossfilter
+description: >-
+  CROSSFILTER(..., BOTH) lets a filter on Orders reach Calendar, and works together with USERELATIONSHIP
+  on the same relationship.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Calendar:
+      columns:
+        Day: integer
+        Week: string
+      rows:
+      - [1, W1]
+      - [2, W1]
+      - [3, W2]
+      - [4, W2]
+    Orders:
+      columns:
+        OrderID: integer
+        OrderDay: integer
+        ShipDay: integer
+        Units: integer
+      rows:
+      - [1, 1, 2, 10]
+      - [2, 1, 3, 20]
+      - [3, 3, 4, 30]
+      - [4, 4, 4, 40]
+  relationships:
+  - from: Orders[OrderDay]
+    to: Calendar[Day]
+  - from: Orders[ShipDay]
+    to: Calendar[Day]
+    active: false
+python: |
+  units = model.add_measure("Total Units", SUM(Orders["Units"]), table="Orders")
+  result = model.evaluate(ROW(
+      "DaysSingle", CALCULATE(COUNTROWS(Calendar), Orders["Units"] > 15),
+      "DaysBoth", CALCULATE(COUNTROWS(Calendar), Orders["Units"] > 15,
+                            CROSSFILTER(Orders["OrderDay"], Calendar["Day"], "BOTH")),
+      "ShipDaysBoth", CALCULATE(COUNTROWS(Calendar), Orders["Units"] > 15,
+                                USERELATIONSHIP(Orders["ShipDay"], Calendar["Day"]),
+                                CROSSFILTER(Orders["ShipDay"], Calendar["Day"], "BOTH")),
+  ))
+dax: |
+  EVALUATE
+      ROW("DaysSingle", CALCULATE(COUNTROWS('Calendar'), Orders[Units] > 15), "DaysBoth", CALCULATE(COUNTROWS('Calendar'), Orders[Units] > 15, CROSSFILTER(Orders[OrderDay], 'Calendar'[Day], BOTH)), "ShipDaysBoth", CALCULATE(COUNTROWS('Calendar'), Orders[Units] > 15, USERELATIONSHIP(Orders[ShipDay], 'Calendar'[Day]), CROSSFILTER(Orders[ShipDay], 'Calendar'[Day], BOTH)))
+expected:
+  ordered: false
+  columns:
+    '[DaysSingle]': integer
+    '[DaysBoth]': integer
+    '[ShipDaysBoth]': integer
+  rows:
+  - [4, 3, 2]

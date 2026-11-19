@@ -111,6 +111,26 @@ model.evaluate(SUMMARIZECOLUMNS(Product["Color"], {"Total": total}))
 * **Checked against Power BI Desktop:** BLANK arithmetic, comparisons, currency types and
   blank-row behavior come from queries run in Desktop (see `tests/golden/cases`).
 
+**Phase 4 (CALCULATE and filter modifiers) is done.**
+
+```python
+share = CALCULATE(total, ALLSELECTED(Product["Color"]))
+by_ship = CALCULATE(total, USERELATIONSHIP(Sales["ShipDate"], Date["Date"]))
+red = CALCULATE(total, Product["Color"] == "Red", KEEPFILTERS(Sales["Qty"] > 1))
+```
+
+* **CALCULATE and CALCULATETABLE:** filter arguments are evaluated first, then context
+  transition, then the modifiers, then the filters, in Power BI's order. True/False
+  filters work like `FILTER(ALL(<columns>), <condition>)`, blank row included. Tables
+  filter their expanded table, so `CALCULATE(..., Sales)` filters Product too.
+* **Modifiers:** `ALL`, `ALLEXCEPT`, `ALLNOBLANKROW`, `ALLSELECTED` (inside
+  SUMMARIZECOLUMNS), `REMOVEFILTERS`, `KEEPFILTERS`, `USERELATIONSHIP`, `CROSSFILTER`
+  (BOTH, ONEWAY, NONE) and `TREATAS`.
+* **Inspecting the filter context:** `VALUES`, `DISTINCT`, `FILTERS`, `HASONEVALUE`,
+  `HASONEFILTER`, `SELECTEDVALUE`, `ISFILTERED`, `ISCROSSFILTERED`, `ISINSCOPE` and
+  `LOOKUPVALUE`. A one-column table used as a value gives its single value.
+* **Checked against Power BI Desktop:** 15 golden cases in `tests/golden/cases/calculate`.
+
 Anything else raises `NotSupportedError` naming the phase that brings it. The engine
 never guesses at an answer that might differ from Power BI.
 
