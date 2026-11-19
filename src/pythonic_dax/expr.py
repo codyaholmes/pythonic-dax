@@ -199,6 +199,15 @@ class TableExpr(_ExprBase):
 
     kind: ClassVar[Kind] = "table"
 
+    def __getitem__(self, name: str) -> ColumnName:
+        """A column this table expression adds, by name: DAX ``[name]``.
+
+        ``t = ADDCOLUMNS(Product, {"Sales": total})`` then ``FILTER(t, t["Sales"] > 10)``.
+        """
+        if not isinstance(name, str):
+            raise TypeError(f"column names are text, got {name!r}")
+        return ColumnName(name)
+
 
 class ModifierExpr(_ExprBase):
     """A CALCULATE modifier such as ``USERELATIONSHIP`` or ``REMOVEFILTERS``.
@@ -488,6 +497,18 @@ class TableConstructor(TableExpr):
             return "(" + ", ".join(v.to_dax() for v in values) + ")"
 
         return "{" + ", ".join(row(r) for r in self.rows) + "}", PREC_ATOM
+
+
+class ColumnName(Expr):
+    """A column of a table expression that isn't a model column, such as one added by
+    ADDCOLUMNS. DAX writes it ``[name]``. It reads the innermost row context that has a
+    column with this name."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def _dax(self) -> tuple[str, int]:
+        return "[" + self.name.replace("]", "]]") + "]", PREC_ATOM
 
 
 # --- variables ------------------------------------------------------------------

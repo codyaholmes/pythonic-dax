@@ -27,6 +27,7 @@ from .errors import DaxError, NotSupportedError
 from .expr import (
     BinaryOp,
     Call,
+    ColumnName,
     Literal_,
     ModifierCall,
     Node,
@@ -100,8 +101,12 @@ def infer_type(node: Any) -> StaticType:
             return infer_type(args[0])
         if name == "AVERAGE":
             return DaxType.DECIMAL
-        if name == "CALCULATE":
+        if name in ("CALCULATE", "EARLIER", "EARLIEST"):
             return infer_type(args[0])
+        if name in ("SUMX", "MINX", "MAXX"):
+            return infer_type(args[1])
+        if name in ("AVERAGEX", "PRODUCTX"):
+            return DaxType.DECIMAL
         if name in ("SELECTEDVALUE", "LOOKUPVALUE"):
             alternate = _alternate(name, args)
             return unify(
@@ -216,6 +221,17 @@ class RowRef:
     columns: tuple[Column, ...] | None = None
 
 
+@dataclass(frozen=True)
+class FrameRow:
+    """A row context on a row of a computed table (ADDCOLUMNS, VALUES(...), ...)."""
+
+    frame: Frame
+    index: int
+
+
+Row = RowRef | FrameRow
+
+
 class _Lazy:
     """A variable's value, evaluated the first time it is used."""
 
@@ -236,9 +252,10 @@ class _Lazy:
 @dataclass(frozen=True)
 class Context:
     filters: FilterContext = field(default_factory=FilterContext)
-    rows: tuple[RowRef, ...] = ()
+    rows: tuple[Row, ...] = ()
     env: dict[int, _Lazy] = field(default_factory=dict)
     shadow: FilterContext | None = None  # what ALLSELECTED restores
+    group: TableValue | None = None  # the current group of GROUPBY (CURRENTGROUP)
 
 
 @dataclass
@@ -271,6 +288,22 @@ class Frame:
     columns: list[ResultColumn]
     rows: list[list[Value]]
     filterable: bool = True
+
+    def find(self, column: Column) -> int | None:
+        """The position of the column with this lineage, if the table has one."""
+        for i, c in enumerate(self.columns):
+            if c.column is column:
+                return i
+        return None
+
+    def find_name(self, name: str) -> int | None:
+        """The position of the column named ``[name]`` (an added or renamed column),
+        ignoring case."""
+        wanted = f"[{name}]".lower()
+        for i, c in enumerate(self.columns):
+            if c.name.lower() == wanted:
+                return i
+        return None
 
     def to_polars(self) -> pl.DataFrame:
         series = []
@@ -359,6 +392,8 @@ class Evaluator:
             return v
         if is_column(node):
             return self._column_value(node, ctx)
+        if isinstance(node, ColumnName):
+            return self._named_value(node, ctx)
         if is_measure(node):
             return self.scalar(node.expression, self._transition(ctx, keep_env=False))
         if isinstance(node, VarRef):
@@ -377,10 +412,16 @@ class Evaluator:
         raise TypeError(f"can't evaluate {node!r} as a value")
 
     def _column_value(self, column: Column, ctx: Context) -> Value:
+        """A column's value in the innermost row context that has the column."""
         for row in reversed(ctx.rows):
+            if isinstance(row, FrameRow):
+                i = row.frame.find(column)
+                if i is not None:
+                    return row.frame.rows[row.index][i]
+                continue
             if row.table is column.table:
                 if row.columns is not None and not any(c is column for c in row.columns):
-                    break
+                    continue
                 self.storage.check_text(column)
                 return self.storage.ext(column.table)[column.name][row.index]
         raise DaxError(
@@ -389,6 +430,23 @@ class Evaluator:
             "contains many values without specifying an aggregation such as min, max, count, "
             "or sum to get a single result."
         )
+
+    def _named_value(self, node: ColumnName, ctx: Context) -> Value:
+        for row in reversed(ctx.rows):
+            if isinstance(row, FrameRow):
+                i = row.frame.find_name(node.name)
+                if i is not None:
+                    return row.frame.rows[row.index][i]
+        raise DaxError(
+            f"Column '{node.name}' cannot be found or may not be used in this expression."
+        )
+
+    def rows_of(self, value: TableValue) -> list[Row]:
+        """One row context per row of a table, as an iterator like SUMX makes them."""
+        if isinstance(value, Frame):
+            return [FrameRow(value, i) for i in range(len(value.rows))]
+        mask = self._rowset_mask(value)
+        return [RowRef(value.table, int(i)) for i in mask.arg_true().to_list()]
 
     def _variable(self, node: Any, ctx: Context) -> Any:
         lazy = ctx.env.get(id(node.value))
@@ -435,7 +493,13 @@ class Evaluator:
                     "left of IN."
                 )
             return [self.scalar(row[0], ctx) for row in node.rows]
-        raise NotSupportedError("IN with a table expression other than a list", phase=5)
+        frame = self.to_frame(self.table(node, ctx))
+        if len(frame.columns) != 1:
+            raise DaxError(
+                "The number of columns in the table must match the number of values on the "
+                "left of IN."
+            )
+        return [row[0] for row in frame.rows]
 
     # --- function calls ----------------------------------------------------------------
 
@@ -462,16 +526,38 @@ class Evaluator:
         """Context transition: each row context becomes a filter on its row's values."""
         filters = ctx.filters
         for row in ctx.rows:  # an inner row context replaces an outer one's filters
-            filters = filters.apply([self._row_filter(row)])
+            filters = filters.apply(self._row_filters(row))
         return Context(filters=filters, env=ctx.env if keep_env else {}, shadow=ctx.shadow)
+
+    def _row_filters(self, row: Row) -> list[ColumnFilter]:
+        if isinstance(row, RowRef):
+            return [self._row_filter(row)]
+        # A computed row filters each model column it has (its lineage), table by table.
+        by_table: dict[int, list[tuple[Column, Value]]] = {}
+        for col, value in zip(row.frame.columns, row.frame.rows[row.index], strict=True):
+            if col.column is None:
+                continue
+            pairs = by_table.setdefault(id(col.column.table), [])
+            if not any(c is col.column for c, _ in pairs):
+                pairs.append((col.column, value))
+        filters = []
+        for pairs in by_table.values():
+            columns = [c for c, _ in pairs]
+            for c in columns:
+                self.storage.check_text(c)
+            values = pl.DataFrame(
+                [pl.Series(c.name, [v], dtype=c.data_type.polars_dtype) for c, v in pairs]
+            )
+            filters.append(ColumnFilter(columns[0].table, columns, values))
+        return filters
 
     def _row_filter(self, row: RowRef) -> ColumnFilter:
         table = row.table
         if row.columns is not None:
             columns = list(row.columns)
-        elif (key := self.model.row_identifier(table)) is not None:
-            columns = [key]
         else:
+            # Every column of the row, so the filter also replaces outer filters on any
+            # of them (a filter on the key alone wouldn't replace a filter on Name).
             columns = [c for c in self.storage.present_columns(table) if c is not self.computing]
         return self.storage.row_filter(table, row.index, columns)
 
@@ -505,6 +591,10 @@ class Evaluator:
             )
         if isinstance(node, TableConstructor):
             return self._table_constructor(node, ctx)
+        if type(node).__name__ == "_DataTable":
+            from ._tables import datatable
+
+            return datatable(self, node, ctx)
         name = getattr(node, "name", type(node).__name__)
         raise NotSupportedError(str(name), PLANNED.get(str(name)))
 
@@ -1018,6 +1108,8 @@ def _related(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
         )
     last_error: DaxError | None = None
     for row in reversed(ctx.rows):
+        if isinstance(row, FrameRow):
+            raise NotSupportedError("RELATED in a row context on a computed table")
         try:
             path = ev.related_path(row.table, column.table)
         except DaxError as error:
@@ -1217,7 +1309,9 @@ def _values_table(name: str) -> Callable[[Evaluator, list[Any], Context], TableV
             column = ResultColumn(f"{arg.table.name}[{arg.name}]", arg.data_type, arg)
             return Frame([column], [[v] for v in values.to_list()])
         if not getattr(arg, "is_table_ref", False):
-            raise NotSupportedError(f"{name} of a table expression", phase=5)
+            from ._tables import _distinct_table
+
+            return _distinct_table(ev, ev.table(arg, ctx))
         mask = ev.storage.visible(arg, ctx.filters)
         if name == "VALUES":
             return RowSet(arg, mask, blank=True)
@@ -1385,3 +1479,15 @@ EVALUATED = (
     }
 )  # fmt: skip
 """Functions this engine evaluates (some only in their simple forms)."""
+
+
+def _register() -> None:
+    from ._iterators import SCALAR
+    from ._tables import TABLES
+
+    _SCALAR_FUNCTIONS.update(SCALAR)
+    _TABLE_FUNCTIONS.update(TABLES)
+
+
+_register()
+EVALUATED = EVALUATED | frozenset(_SCALAR_FUNCTIONS) | frozenset(_TABLE_FUNCTIONS) | {"DATATABLE"}
