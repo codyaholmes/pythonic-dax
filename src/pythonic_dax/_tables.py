@@ -124,20 +124,23 @@ def _selectcolumns(ev: Evaluator, args: list[Any], ctx: Context) -> TableValue:
     value = ev.table(args[0], ctx)
     rows = ev.rows_of(value)
     items: list[tuple[str, Any]] = []
+    headers: list[str] = []
     rest = args[1:]
     i = 0
     while i < len(rest):
-        if is_column(rest[i]):
+        if is_column(rest[i]):  # a bare column keeps its full name, Table[Column]
             items.append((rest[i].name, rest[i]))
+            headers.append(f"{rest[i].table.name}[{rest[i].name}]")
             i += 1
         else:
             items.append((rest[i].value, rest[i + 1]))
+            headers.append(f"[{rest[i].value}]")
             i += 2
     columns: list[ResultColumn] = []
-    for name, expr in items:
+    for (name, expr), header in zip(items, headers, strict=True):
         _check_name(columns, name)
         lineage = expr if is_column(expr) else None
-        columns.append(ResultColumn(f"[{name}]", None, lineage))
+        columns.append(ResultColumn(header, None, lineage))
     computed = [[ev.scalar(e, _with_row(ctx, r)) for _, e in items] for r in rows]
     for j, (_, expr) in enumerate(items):
         t = _result_type(expr, [row[j] for row in computed])

@@ -1,0 +1,66 @@
+id: selectcolumns-lineage
+description: >-
+  A column renamed by SELECTCOLUMNS keeps its lineage, so the FILTER table still filters Product[Color]
+  in CALCULATE.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  total = model.add_measure("Total", SUM(Sales["Amount"]), table="Sales")
+  s = SELECTCOLUMNS(Product, {"C": Product["Color"]})
+  result = model.evaluate(ROW(
+      "ByLineage", CALCULATE(total, FILTER(s, s["C"] == "Red")),
+      "Rows", COUNTROWS(s),
+  ))
+dax: |
+  DEFINE
+      MEASURE Sales[Total] = SUM(Sales[Amount])
+  EVALUATE
+      ROW("ByLineage", CALCULATE([Total], FILTER(SELECTCOLUMNS(Product, "C", Product[Color]), [C] = "Red")), "Rows", COUNTROWS(SELECTCOLUMNS(Product, "C", Product[Color])))
+expected:
+  ordered: false
+  columns:
+    '[ByLineage]': decimal
+    '[Rows]': integer
+  rows:
+  - [15.5, 4]

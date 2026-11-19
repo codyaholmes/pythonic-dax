@@ -1,0 +1,82 @@
+id: sumx-family
+description: >-
+  SUMX, AVERAGEX, MINX, MAXX, COUNTX, COUNTAX and PRODUCTX over Sales, grouped by color. BLANK values
+  are skipped (Green's only Qty is BLANK, so most results are BLANK there), and an iterator over VALUES(Customer[Name])
+  calls the measure once per customer with context transition. PRODUCTX of whole numbers gives a decimal.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  total = model.add_measure("Total", SUM(Sales["Amount"]), table="Sales")
+  S = Sales
+  result = model.evaluate(SUMMARIZECOLUMNS(Product["Color"], {
+      "SumX": SUMX(S, S["Amount"] * S["Qty"]),
+      "AvgX": AVERAGEX(S, S["Amount"]),
+      "MinX": MINX(S, S["Qty"]),
+      "MaxX": MAXX(S, S["Note"]),
+      "CountX": COUNTX(S, S["Qty"]),
+      "CountAX": COUNTAX(S, S["Note"]),
+      "ProductX": PRODUCTX(S, S["Qty"]),
+      "ByCustomer": SUMX(VALUES(Customer["Name"]), total),
+  }))
+dax: |
+  DEFINE
+      MEASURE Sales[Total] = SUM(Sales[Amount])
+  EVALUATE
+      SUMMARIZECOLUMNS(Product[Color], "SumX", SUMX(Sales, Sales[Amount] * Sales[Qty]), "AvgX", AVERAGEX(Sales, Sales[Amount]), "MinX", MINX(Sales, Sales[Qty]), "MaxX", MAXX(Sales, Sales[Note]), "CountX", COUNTX(Sales, Sales[Qty]), "CountAX", COUNTAX(Sales, Sales[Note]), "ProductX", PRODUCTX(Sales, Sales[Qty]), "ByCustomer", SUMX(VALUES(Customer[Name]), [Total]))
+expected:
+  ordered: false
+  columns:
+    Product[Color]: string
+    '[SumX]': decimal
+    '[AvgX]': decimal
+    '[MinX]': integer
+    '[MaxX]': string
+    '[CountX]': integer
+    '[CountAX]': integer
+    '[ProductX]': decimal
+    '[ByCustomer]': decimal
+  rows:
+  - [null, 401, 50.5, 1, c, 2, 2, 4, 101]
+  - [Red, 21, 7.75, 1, x, 2, 2, 2, 15.5]
+  - [Green, null, 7.25, null, null, null, null, null, 7.25]

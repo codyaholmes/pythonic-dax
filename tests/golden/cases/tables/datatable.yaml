@@ -1,0 +1,61 @@
+id: datatable
+description: >-
+  DATATABLE with typed columns. A whole number in a CURRENCY column becomes currency, and BLANK() stays
+  BLANK.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  result = model.evaluate(DATATABLE({"Item": "STRING", "Price": "CURRENCY", "Qty": "INTEGER"}, [["A", 1.5, 2], ["B", 2, None]]))
+dax: |
+  EVALUATE
+      DATATABLE("Item", STRING, "Price", CURRENCY, "Qty", INTEGER, {{"A", 1.5, 2}, {"B", 2, BLANK()}})
+expected:
+  ordered: false
+  columns:
+    '[Item]': string
+    '[Price]': currency
+    '[Qty]': integer
+  rows:
+  - [A, 1.5, 2]
+  - [B, 2, null]

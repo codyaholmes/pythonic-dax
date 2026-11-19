@@ -531,7 +531,14 @@ class Evaluator:
 
     def _row_filters(self, row: Row) -> list[ColumnFilter]:
         if isinstance(row, RowRef):
-            return [self._row_filter(row)]
+            own = self._row_filter(row)
+            if row.columns is not None:
+                return [own]
+            # A row of a model table filters its expanded table, like a table filter:
+            # the related rows on the one side of each relationship are filtered too.
+            height = self.storage.ext(row.table).height
+            mask = pl.Series([False] * height).scatter(row.index, True)
+            return [own, *self._expanded_filters(row.table, mask)[1:]]
         # A computed row filters each model column it has (its lineage), table by table.
         by_table: dict[int, list[tuple[Column, Value]]] = {}
         for col, value in zip(row.frame.columns, row.frame.rows[row.index], strict=True):
