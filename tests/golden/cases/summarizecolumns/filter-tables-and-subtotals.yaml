@@ -1,0 +1,84 @@
+id: filter-tables-and-subtotals
+description: >-
+  A filter table (TREATAS) limits the colors before grouping; ALLSELECTED restores it, while ALL removes
+  it. The customer list isn't narrowed by the color filter, even though it reaches Customer through the
+  two-way relationship: Cy is kept because AllColors isn't BLANK.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  total = model.add_measure("Total", SUM(Sales["Amount"]), table="Sales")
+  result = model.evaluate(SUMMARIZECOLUMNS(
+      Customer["Name"],
+      ROLLUPADDISSUBTOTAL(Product["Color"], "IsColorTotal"),
+      TREATAS(["Red", "Green"], Product["Color"]),
+      {
+          "Total": total,
+          "AllSel": CALCULATE(total, ALLSELECTED(Product["Color"])),
+          "AllColors": CALCULATE(total, ALL(Product["Color"])),
+      },
+  ))
+dax: |
+  DEFINE
+      MEASURE Sales[Total] = SUM(Sales[Amount])
+  EVALUATE
+      SUMMARIZECOLUMNS(Customer[Name], ROLLUPADDISSUBTOTAL(Product[Color], "IsColorTotal"), TREATAS({"Red", "Green"}, Product[Color]), "Total", [Total], "AllSel", CALCULATE([Total], ALLSELECTED(Product[Color])), "AllColors", CALCULATE([Total], ALL(Product[Color])))
+expected:
+  ordered: false
+  columns:
+    Customer[Name]: string
+    Product[Color]: string
+    '[IsColorTotal]': boolean
+    '[Total]': decimal
+    '[AllSel]': decimal
+    '[AllColors]': decimal
+  rows:
+  - [Ann, Red, false, 10, 17.25, 17.25]
+  - [Ann, Green, false, 7.25, 17.25, 17.25]
+  - [Bob, Red, false, 5.5, 5.5, 105.5]
+  - [Bob, Green, false, null, 5.5, 105.5]
+  - [Cy, Red, false, null, null, 1]
+  - [Cy, Green, false, null, null, 1]
+  - [Ann, null, true, 17.25, 17.25, 17.25]
+  - [Bob, null, true, 5.5, 5.5, 105.5]
+  - [Cy, null, true, null, null, 1]

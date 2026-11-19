@@ -15,6 +15,7 @@ from .expr import (
     OMITTED,
     Arg,
     Call,
+    GroupingCall,
     Keyword,
     Node,
     TableConstructor,
@@ -122,6 +123,10 @@ def check_arg(spec: Spec, param: Param, value: Any, position: int) -> Arg:
         return node
 
     node = coerce_any(value)
+    if isinstance(node, GroupingCall):
+        raise DaxError(
+            f"{node.name} can only be used among the group-by columns of SUMMARIZECOLUMNS."
+        )
     if kind == "F":
         if node.kind == "scalar":
             check_boolean_filter(name, node)

@@ -28,6 +28,7 @@ from .expr import (
     BinaryOp,
     Call,
     ColumnName,
+    GroupingCall,
     Literal_,
     ModifierCall,
     Node,
@@ -628,41 +629,71 @@ class Evaluator:
         return RowSet(table, self.storage.visible(table, inner.filters))
 
     def _summarizecolumns(self, args: list[Any], ctx: Context) -> Frame:
-        group: list[Column] = []
-        named: list[tuple[str, Any]] = []
+        plain: list[Column] = []
+        rollup: list[tuple[Column, str]] = []
         i = 0
-        while i < len(args) and is_column(args[i]):
-            group.append(args[i])
+        while i < len(args) and (is_column(args[i]) or isinstance(args[i], GroupingCall)):
+            if isinstance(args[i], GroupingCall):
+                items = args[i].args
+                rollup += [(items[k], items[k + 1].value) for k in range(0, len(items), 2)]
+            else:
+                plain.append(args[i])
+            i += 1
+        filter_args = []
+        while i < len(args) and getattr(args[i], "kind", None) == "table":
+            filter_args.append(args[i])
             i += 1
         rest = args[i:]
-        if any(getattr(a, "kind", None) == "table" for a in rest):
-            raise NotSupportedError("SUMMARIZECOLUMNS with filter tables", phase=5)
-        for name, expr in zip(rest[::2], rest[1::2], strict=True):
-            named.append((name.value, expr))
+        named = [(name.value, expr) for name, expr in zip(rest[::2], rest[1::2], strict=True)]
         if not named:
-            raise NotSupportedError("SUMMARIZECOLUMNS without expressions", phase=5)
+            raise NotSupportedError("SUMMARIZECOLUMNS without expressions")
+        if ctx.rows:
+            raise NotSupportedError("SUMMARIZECOLUMNS inside a row context")
 
-        tables: dict[int, list[Column]] = {}
+        # Filter tables work like CALCULATETABLE's. ALLSELECTED inside restores this.
+        if filter_args:
+            ctx = self.calculate_context(filter_args, ctx)
+        group = plain + [c for c, _ in rollup]
         for col in group:
             self.storage.check_text(col)
-            tables.setdefault(id(col.table), []).append(col)
-        shadow = ctx.filters  # ALLSELECTED inside restores the filters from outside
-        combos = pl.DataFrame()
-        for cols in tables.values():
-            table = cols[0].table
-            values = (
-                self.storage.visible_rows(table, ctx.filters)
-                .select([c.name for c in cols])
-                .unique(maintain_order=True)
-            )
-            values = values.rename({c.name: f"{id(c)}" for c in cols})
-            combos = values if combos.width == 0 else combos.join(values, how="cross")
-
         columns = [ResultColumn(f"{c.table.name}[{c.name}]", c.data_type, c) for c in group]
+        columns += [ResultColumn(f"[{n}]", DaxType.BOOLEAN) for _, n in rollup]
         columns += [ResultColumn(f"[{name}]", infer_type(expr)) for name, expr in named]
         rows: list[list[Value]] = []
-        combo_rows = combos.rows() if combos.width else [()]
-        for combo in combo_rows:
+        # The detail rows, then one level of subtotals per rollup column, last first.
+        for rolled in range(len(rollup) + 1):
+            active = plain + [c for c, _ in rollup[: len(rollup) - rolled]]
+            flags = [k >= len(rollup) - rolled for k in range(len(rollup))]
+            for combo, results in self._group_rows(active, named, ctx):
+                by_column = dict(zip((id(c) for c in active), combo, strict=True))
+                values = [by_column.get(id(c)) for c in group]
+                rows.append([*values, *flags, *results])
+        return Frame(columns, rows)
+
+    def _group_rows(
+        self, group: list[Column], named: list[tuple[str, Any]], ctx: Context
+    ) -> list[tuple[tuple[Value, ...], list[Value]]]:
+        """Each existing combination of the group-by values, with the expressions'
+        results, leaving out combinations where every result is BLANK.
+
+        Columns of one table give the combinations that exist in it, under the filters
+        on that table's own columns only (relationships don't narrow them); the tables
+        are then combined in every way.
+        """
+        tables: dict[int, list[Column]] = {}
+        for col in group:
+            tables.setdefault(id(col.table), []).append(col)
+        combos = pl.DataFrame()
+        for cols in tables.values():
+            values = (
+                self.storage.own_rows(cols[0].table, ctx.filters)
+                .select([c.name for c in cols])
+                .unique(maintain_order=True)
+                .rename({c.name: f"{id(c)}" for c in cols})
+            )
+            combos = values if combos.width == 0 else combos.join(values, how="cross")
+        result = []
+        for combo in combos.rows() if combos.width else [()]:
             by_column = dict(zip((id(c) for c in group), combo, strict=True))
             filters = [
                 ColumnFilter(
@@ -678,12 +709,11 @@ class Evaluator:
                 )
                 for cols in tables.values()
             ]
-            inner = Context(filters=ctx.filters.apply(filters), env=ctx.env, shadow=shadow)
+            inner = Context(filters=ctx.filters.apply(filters), env=ctx.env, shadow=ctx.filters)
             results = [self.scalar(expr, inner) for _, expr in named]
-            if all(r is None for r in results):
-                continue
-            rows.append([*combo, *results])
-        return Frame(columns, rows)
+            if any(r is not None for r in results):
+                result.append((combo, results))
+        return result
 
     # --- CALCULATE -------------------------------------------------------------------
 

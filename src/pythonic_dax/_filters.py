@@ -214,6 +214,17 @@ class Storage:
         ext = self.ext(table)
         return ext if mask is None else ext.filter(mask)
 
+    def own_rows(self, table: Table, filters: FilterContext) -> pl.DataFrame:
+        """Rows allowed by the filters on the table's own columns, ignoring filters that
+        would reach it through relationships (SUMMARIZECOLUMNS group-by values)."""
+        mask: pl.Series | None = None
+        for f in filters.filters:
+            if f.table is table:
+                m = self._filter_mask(f)
+                mask = m if mask is None else mask & m
+        ext = self.ext(table)
+        return ext if mask is None else ext.filter(mask)
+
     def blank_row_visible(self, table: Table, filters: FilterContext) -> bool:
         index = self.blank_index(table)
         if index is None:

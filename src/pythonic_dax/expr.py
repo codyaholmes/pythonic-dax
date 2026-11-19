@@ -475,6 +475,17 @@ class ModifierCall(_CallMixin, ModifierExpr):
         self.args = args
 
 
+class GroupingCall(_CallMixin, ModifierExpr):
+    """A SUMMARIZECOLUMNS group-by helper such as ``ROLLUPADDISSUBTOTAL``.
+
+    It is only valid among the group-by columns of SUMMARIZECOLUMNS.
+    """
+
+    def __init__(self, name: str, args: list[Arg]) -> None:
+        self.name = name
+        self.args = args
+
+
 # --- tables written inline -------------------------------------------------------
 
 

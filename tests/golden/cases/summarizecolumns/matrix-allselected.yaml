@@ -1,0 +1,94 @@
+id: matrix-allselected
+description: >-
+  RANKX over ALLSELECTED(Customer[Name]) ranks among all customers within each color (and among all customers
+  on subtotal rows). CALCULATE(..., ALLSELECTED()) gives the grand total everywhere.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  total = model.add_measure("Total", SUM(Sales["Amount"]), table="Sales")
+  result = model.evaluate(SUMMARIZECOLUMNS(
+      ROLLUPADDISSUBTOTAL(Customer["Name"], "IsNameTotal", Product["Color"], "IsColorTotal"),
+      {
+          "Total": total,
+          "Rank": RANKX(ALLSELECTED(Customer["Name"]), total),
+          "OfAll": CALCULATE(total, ALLSELECTED()),
+      },
+  ))
+dax: |
+  DEFINE
+      MEASURE Sales[Total] = SUM(Sales[Amount])
+  EVALUATE
+      SUMMARIZECOLUMNS(ROLLUPADDISSUBTOTAL(Customer[Name], "IsNameTotal", Product[Color], "IsColorTotal"), "Total", [Total], "Rank", RANKX(ALLSELECTED(Customer[Name]), [Total]), "OfAll", CALCULATE([Total], ALLSELECTED()))
+expected:
+  ordered: false
+  columns:
+    Customer[Name]: string
+    Product[Color]: string
+    '[IsNameTotal]': boolean
+    '[IsColorTotal]': boolean
+    '[Total]': decimal
+    '[Rank]': integer
+    '[OfAll]': decimal
+  rows:
+  - [Ann, Red, false, false, 10, 1, 123.75]
+  - [Ann, Green, false, false, 7.25, 1, 123.75]
+  - [Bob, null, false, false, 100, 1, 123.75]
+  - [Bob, Red, false, false, 5.5, 2, 123.75]
+  - [Cy, null, false, false, 1, 2, 123.75]
+  - [Ann, null, false, false, null, 3, 123.75]
+  - [Dee, null, false, false, null, 3, 123.75]
+  - [Cy, Red, false, false, null, 3, 123.75]
+  - [Dee, Red, false, false, null, 3, 123.75]
+  - [Bob, Green, false, false, null, 2, 123.75]
+  - [Cy, Green, false, false, null, 2, 123.75]
+  - [Dee, Green, false, false, null, 2, 123.75]
+  - [Ann, Blue, false, false, null, 1, 123.75]
+  - [Bob, Blue, false, false, null, 1, 123.75]
+  - [Cy, Blue, false, false, null, 1, 123.75]
+  - [Dee, Blue, false, false, null, 1, 123.75]
+  - [Ann, null, false, true, 17.25, 2, 123.75]
+  - [Bob, null, false, true, 105.5, 1, 123.75]
+  - [Cy, null, false, true, 1, 3, 123.75]
+  - [Dee, null, false, true, null, 4, 123.75]
+  - [null, null, true, true, 123.75, 1, 123.75]

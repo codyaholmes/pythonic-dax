@@ -1,0 +1,91 @@
+id: rollup-two-levels
+description: >-
+  ROLLUPADDISSUBTOTAL adds a subtotal per customer (color rolled up) and a grand total (both rolled up).
+  Rolled-up columns are BLANK and their True/False columns TRUE; the True/False columns come after the
+  group-by columns. ISINSCOPE is TRUE only where the color is grouped, so no row is all BLANK and every
+  name/color combination is kept, even with no sales.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  total = model.add_measure("Total", SUM(Sales["Amount"]), table="Sales")
+  result = model.evaluate(SUMMARIZECOLUMNS(
+      ROLLUPADDISSUBTOTAL(Customer["Name"], "IsNameTotal", Product["Color"], "IsColorTotal"),
+      {"Total": total, "InScope": ISINSCOPE(Product["Color"])},
+  ))
+dax: |
+  DEFINE
+      MEASURE Sales[Total] = SUM(Sales[Amount])
+  EVALUATE
+      SUMMARIZECOLUMNS(ROLLUPADDISSUBTOTAL(Customer[Name], "IsNameTotal", Product[Color], "IsColorTotal"), "Total", [Total], "InScope", ISINSCOPE(Product[Color]))
+expected:
+  ordered: false
+  columns:
+    Customer[Name]: string
+    Product[Color]: string
+    '[IsNameTotal]': boolean
+    '[IsColorTotal]': boolean
+    '[Total]': decimal
+    '[InScope]': boolean
+  rows:
+  - [Ann, Red, false, false, 10, true]
+  - [Ann, Green, false, false, 7.25, true]
+  - [Bob, null, false, false, 100, true]
+  - [Bob, Red, false, false, 5.5, true]
+  - [Cy, null, false, false, 1, true]
+  - [Ann, null, false, false, null, true]
+  - [Dee, null, false, false, null, true]
+  - [Cy, Red, false, false, null, true]
+  - [Dee, Red, false, false, null, true]
+  - [Bob, Green, false, false, null, true]
+  - [Cy, Green, false, false, null, true]
+  - [Dee, Green, false, false, null, true]
+  - [Ann, Blue, false, false, null, true]
+  - [Bob, Blue, false, false, null, true]
+  - [Cy, Blue, false, false, null, true]
+  - [Dee, Blue, false, false, null, true]
+  - [Ann, null, false, true, 17.25, false]
+  - [Bob, null, false, true, 105.5, false]
+  - [Cy, null, false, true, 1, false]
+  - [Dee, null, false, true, null, false]
+  - [null, null, true, true, 123.75, false]

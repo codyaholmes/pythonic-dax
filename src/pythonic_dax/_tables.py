@@ -36,7 +36,7 @@ from ._evaluate import (
 )
 from ._iterators import order_args, same_keys, sorted_rows
 from .errors import DaxError, NotSupportedError
-from .expr import Literal_, _Omitted, is_column
+from .expr import Call, Literal_, _Omitted, is_column
 from .types import DaxType
 
 if TYPE_CHECKING:
@@ -492,7 +492,33 @@ def _distinct_table(ev: Evaluator, value: TableValue) -> Frame:
     return Frame(frame.columns, rows, filterable=False)
 
 
+def _allselected(ev: Evaluator, args: list[Any], ctx: Context) -> TableValue:
+    """ALLSELECTED as a table: the rows visible once the filters on its columns are put
+    back to the last shadow filter context (the filters from outside SUMMARIZECOLUMNS)."""
+    if ctx.shadow is None:
+        raise NotSupportedError("ALLSELECTED outside an iteration such as SUMMARIZECOLUMNS")
+    if not args:
+        raise NotSupportedError("ALLSELECTED() as a table")
+    restored = ev.calculate_context([Call.raw("ALLSELECTED", list(args), "modifier")], ctx)
+    if len(args) == 1 and not is_column(args[0]):
+        return RowSet(args[0], ev.storage.visible(args[0], restored.filters), blank=True)
+    columns: list[Column] = list(args)
+    table = columns[0].table
+    for c in columns:
+        ev.storage.check_text(c)
+    values = (
+        ev.storage.visible_rows(table, restored.filters)
+        .select([c.name for c in columns])
+        .unique(maintain_order=True)
+    )
+    return Frame(
+        [ResultColumn(f"{table.name}[{c.name}]", c.data_type, c) for c in columns],
+        [list(r) for r in values.rows()],
+    )
+
+
 TABLES: dict[str, TableHandler] = {
+    "ALLSELECTED": _allselected,
     "FILTER": _filter,
     "ADDCOLUMNS": _addcolumns,
     "SELECTCOLUMNS": _selectcolumns,
