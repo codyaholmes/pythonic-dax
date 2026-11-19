@@ -1,0 +1,137 @@
+id: library-math
+description: >-
+  ABS, ROUND, ROUNDUP, ROUNDDOWN and TRUNC keep the argument's type. ROUND rounds half away from zero
+  on the decimal value (1.005 to 1.01). INT floors, MOD takes the divisor's sign, CEILING and FLOOR take
+  the significance's type, MROUND rounds halves away from zero, QUOTIENT truncates toward zero. BLANK
+  gives BLANK.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+  relationships: []
+python: |
+  from pythonic_dax.expr import coerce as c
+  result = model.evaluate(ROW(
+      'Abs', ABS((-c(2))),
+      'AbsD', ABS((-c(2.5))),
+      'AbsC', ABS(CURRENCY((-c(2)))),
+      'AbsB', ABS(BLANK()),
+      'R1', ROUND(c(2.5), c(0)),
+      'R2', ROUND((-c(2.5)), c(0)),
+      'R3', ROUND(c(1.005), c(2)),
+      'R4', ROUND(c(1234.5678), (-c(2))),
+      'R5', ROUND(c(7), c(0)),
+      'R6', ROUND(CURRENCY(c(1.25)), c(1)),
+      'R7', ROUND(BLANK(), c(1)),
+      'R8', ROUND(c(0.285), c(2)),
+      'R9', ROUND(c(2.675), c(2)),
+      'RU', ROUNDUP(c(1.21), c(1)),
+      'RUn', ROUNDUP((-c(1.21)), c(1)),
+      'RD', ROUNDDOWN(c(1.29), c(1)),
+      'RDn', ROUNDDOWN((-c(1.29)), c(1)),
+      'RUi', ROUNDUP(c(5), c(0)),
+      'Int', INT(c(2.7)),
+      'IntN', INT((-c(2.7))),
+      'IntB', INT(BLANK()),
+      'Tr', TRUNC(c(2.77)),
+      'TrN', TRUNC((-c(2.77)), c(1)),
+      'TrI', TRUNC(c(5)),
+      'Mod', MOD(c(7), c(3)),
+      'ModN', MOD((-c(7)), c(3)),
+      'ModND', MOD(c(7), (-c(3))),
+      'ModD', MOD(c(7.5), c(2)),
+      'ModB', MOD(BLANK(), c(3)),
+      'Pow', POWER(c(2), c(3)),
+      'Sqrt', SQRT(c(16)),
+      'Exp', EXP(c(1)),
+      'Ln', LN(c(10)),
+      'Log', LOG(c(100)),
+      'Log2', LOG(c(8), c(2)),
+      'Log10', LOG10(c(1000)),
+      'Sign', SIGN((-c(3.2))),
+      'Sign0', SIGN(c(0)),
+      'SignB', SIGN(BLANK()),
+      'Ceil', CEILING(c(4.3), c(1)),
+      'Ceil2', CEILING(c(4.3), c(0.5)),
+      'CeilN', CEILING((-c(4.3)), c(1)),
+      'CeilI', CEILING(c(7), c(5)),
+      'Flo', FLOOR(c(4.7), c(1)),
+      'FloN', FLOOR((-c(4.3)), c(1)),
+      'FloI', FLOOR(c(7), c(5)),
+      'MR', MROUND(c(10), c(3)),
+      'MR2', MROUND(c(7.5), c(5)),
+      'MRN', MROUND((-c(10)), (-c(3))),
+      'Quo', QUOTIENT(c(7), c(2)),
+      'QuoN', QUOTIENT((-c(7)), c(2)),
+      'QuoD', QUOTIENT(c(7.9), c(2.1)),
+  ))
+dax: |
+  EVALUATE
+      ROW("Abs", ABS(-2), "AbsD", ABS(-2.5), "AbsC", ABS(CURRENCY(-2)), "AbsB", ABS(BLANK()), "R1", ROUND(2.5, 0), "R2", ROUND(-2.5, 0), "R3", ROUND(1.005, 2), "R4", ROUND(1234.5678, -2), "R5", ROUND(7, 0), "R6", ROUND(CURRENCY(1.25), 1), "R7", ROUND(BLANK(), 1), "R8", ROUND(0.285, 2), "R9", ROUND(2.675, 2), "RU", ROUNDUP(1.21, 1), "RUn", ROUNDUP(-1.21, 1), "RD", ROUNDDOWN(1.29, 1), "RDn", ROUNDDOWN(-1.29, 1), "RUi", ROUNDUP(5, 0), "Int", INT(2.7), "IntN", INT(-2.7), "IntB", INT(BLANK()), "Tr", TRUNC(2.77), "TrN", TRUNC(-2.77, 1), "TrI", TRUNC(5), "Mod", MOD(7, 3), "ModN", MOD(-7, 3), "ModND", MOD(7, -3), "ModD", MOD(7.5, 2), "ModB", MOD(BLANK(), 3), "Pow", POWER(2, 3), "Sqrt", SQRT(16), "Exp", EXP(1), "Ln", LN(10), "Log", LOG(100), "Log2", LOG(8, 2), "Log10", LOG10(1000), "Sign", SIGN(-3.2), "Sign0", SIGN(0), "SignB", SIGN(BLANK()), "Ceil", CEILING(4.3, 1), "Ceil2", CEILING(4.3, 0.5), "CeilN", CEILING(-4.3, 1), "CeilI", CEILING(7, 5), "Flo", FLOOR(4.7, 1), "FloN", FLOOR(-4.3, 1), "FloI", FLOOR(7, 5), "MR", MROUND(10, 3), "MR2", MROUND(7.5, 5), "MRN", MROUND(-10, -3), "Quo", QUOTIENT(7, 2), "QuoN", QUOTIENT(-7, 2), "QuoD", QUOTIENT(7.9, 2.1))
+expected:
+  ordered: false
+  columns:
+    '[Abs]': integer
+    '[AbsD]': decimal
+    '[AbsC]': currency
+    '[AbsB]': integer
+    '[R1]': decimal
+    '[R2]': decimal
+    '[R3]': decimal
+    '[R4]': decimal
+    '[R5]': integer
+    '[R6]': currency
+    '[R7]': integer
+    '[R8]': decimal
+    '[R9]': decimal
+    '[RU]': decimal
+    '[RUn]': decimal
+    '[RD]': decimal
+    '[RDn]': decimal
+    '[RUi]': integer
+    '[Int]': integer
+    '[IntN]': integer
+    '[IntB]': integer
+    '[Tr]': decimal
+    '[TrN]': decimal
+    '[TrI]': integer
+    '[Mod]': integer
+    '[ModN]': integer
+    '[ModND]': integer
+    '[ModD]': decimal
+    '[ModB]': integer
+    '[Pow]': decimal
+    '[Sqrt]': decimal
+    '[Exp]': decimal
+    '[Ln]': decimal
+    '[Log]': decimal
+    '[Log2]': decimal
+    '[Log10]': decimal
+    '[Sign]': integer
+    '[Sign0]': integer
+    '[SignB]': integer
+    '[Ceil]': integer
+    '[Ceil2]': decimal
+    '[CeilN]': integer
+    '[CeilI]': integer
+    '[Flo]': integer
+    '[FloN]': integer
+    '[FloI]': integer
+    '[MR]': integer
+    '[MR2]': integer
+    '[MRN]': integer
+    '[Quo]': integer
+    '[QuoN]': integer
+    '[QuoD]': integer
+  rows:
+  - [2, 2.5, 2, null, 3, -3, 1.01, 1200, 7, 1.3, null, 0.29, 2.68, 1.3, -1.3, 1.2,
+    -1.2, 5, 2, -3, null, 2, -2.7, 5, 1, 2, -2, 1.5, null, 8, 4, 2.718281828459045, 2.302585092994046,
+    2, 3, 3, -1, 0, null, 5, 4.5, -4, 10, 4, -5, 5, 9, 10, -9, 3, -3, 3]

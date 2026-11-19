@@ -267,15 +267,9 @@ def concatenate(a: Value, b: Value) -> Value:
 
 
 def _text(value: Value) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
-    if isinstance(value, str):
-        return value
-    if isinstance(value, int):
-        return str(value)
-    raise NotSupportedError(f"converting a {type_label(type_of(value))} value to text", phase=6)
+    from ._format import to_text
+
+    return to_text(value)
 
 
 # --- comparisons -------------------------------------------------------------------

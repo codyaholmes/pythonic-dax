@@ -359,7 +359,7 @@ class Model:
             lines += ["ORDER BY", "    " + ", ".join(parts)]
         return "\n".join(lines)
 
-    # --- evaluation (Phases 3-5) ------------------------------------------------
+    # --- evaluation (Phases 3-6) ------------------------------------------------
 
     def evaluate(self, table_expression: Any) -> pl.DataFrame:
         """Evaluate a table expression, like DAX ``EVALUATE``, and return a DataFrame.

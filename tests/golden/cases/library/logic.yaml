@@ -1,0 +1,113 @@
+id: library-logic
+description: >-
+  DIVIDE returns a decimal (currency for currency over a number), and BLANK or the alternate result when
+  dividing by 0 or BLANK. SWITCH matches text without case, never matches BLANK to 0 or empty text, and
+  unifies its result types. COALESCE skips BLANKs. The IS functions tell BLANK from 0 and empty text.
+  ISEMPTY works on tables.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+  relationships: []
+python: |
+  from pythonic_dax.expr import coerce as c
+  result = model.evaluate(ROW(
+      'Div', DIVIDE(c(7), c(2)),
+      'DivInt', DIVIDE(c(6), c(3)),
+      'DivZero', DIVIDE(c(1), c(0)),
+      'DivZeroAlt', DIVIDE(c(1), c(0), (-c(1))),
+      'DivBlankDen', DIVIDE(c(1), BLANK(), c(9)),
+      'DivBlankNum', DIVIDE(BLANK(), c(2)),
+      'DivCur', DIVIDE(CURRENCY(c(7)), c(2)),
+      'DivCurCur', DIVIDE(CURRENCY(c(7)), CURRENCY(c(2))),
+      'DivZeroZero', DIVIDE(c(0), c(0)),
+      'Sw', SWITCH(c(2), c(1), 'a', c(2), 'b', 'c'),
+      'SwElse', SWITCH(c(5), c(1), 'a', 'c'),
+      'SwNoElse', SWITCH(c(5), c(1), 'a'),
+      'SwBlank0', SWITCH(BLANK(), c(0), 'zero', 'other'),
+      'SwBlankText', SWITCH(BLANK(), '', 'empty', 'other'),
+      'SwTrue', SWITCH(TRUE(), (c(1) > c(2)), 'x', (c(3) > c(2)), 'y'),
+      'SwMixed', SWITCH(c(1), c(1), c(1), c(2), c(2.5)),
+      'SwText', SWITCH('A', 'a', 'lower', 'other'),
+      'Co', COALESCE(BLANK(), c(3), c(4)),
+      'CoAll', COALESCE(BLANK(), BLANK()),
+      'CoMix', COALESCE(BLANK(), c(1), c(2.5)),
+      'IsB', ISBLANK(BLANK()),
+      'IsB0', ISBLANK(c(0)),
+      'IsBE', ISBLANK(''),
+      'IsNum', ISNUMBER(c(1.5)),
+      'IsNumB', ISNUMBER(BLANK()),
+      'IsNumT', ISNUMBER('1'),
+      'IsNumBool', ISNUMBER(TRUE()),
+      'IsNumCur', ISNUMBER(CURRENCY(c(1))),
+      'IsNumDate', ISNUMBER(DATE(c(2024), c(1), c(1))),
+      'IsText', ISTEXT('a'),
+      'IsTextB', ISTEXT(BLANK()),
+      'IsTextE', ISTEXT(''),
+      'IsLog', ISLOGICAL(FALSE()),
+      'IsLogB', ISLOGICAL(BLANK()),
+      'IfErr', IFERROR((c(1) / c(0)), c(5)),
+      'IfErr2', IFERROR(VALUE('x'), (-c(1))),
+      'IsErr', ISERROR(VALUE('x')),
+      'IsErr2', ISERROR(c(1)),
+      'IsEmpty', ISEMPTY(FILTER(Customer, (Customer['Name'] == 'Zed'))),
+      'IsEmpty2', ISEMPTY(Customer),
+  ))
+dax: |
+  EVALUATE
+      ROW("Div", DIVIDE(7, 2), "DivInt", DIVIDE(6, 3), "DivZero", DIVIDE(1, 0), "DivZeroAlt", DIVIDE(1, 0, -1), "DivBlankDen", DIVIDE(1, BLANK(), 9), "DivBlankNum", DIVIDE(BLANK(), 2), "DivCur", DIVIDE(CURRENCY(7), 2), "DivCurCur", DIVIDE(CURRENCY(7), CURRENCY(2)), "DivZeroZero", DIVIDE(0, 0), "Sw", SWITCH(2, 1, "a", 2, "b", "c"), "SwElse", SWITCH(5, 1, "a", "c"), "SwNoElse", SWITCH(5, 1, "a"), "SwBlank0", SWITCH(BLANK(), 0, "zero", "other"), "SwBlankText", SWITCH(BLANK(), "", "empty", "other"), "SwTrue", SWITCH(TRUE(), 1 > 2, "x", 3 > 2, "y"), "SwMixed", SWITCH(1, 1, 1, 2, 2.5), "SwText", SWITCH("A", "a", "lower", "other"), "Co", COALESCE(BLANK(), 3, 4), "CoAll", COALESCE(BLANK(), BLANK()), "CoMix", COALESCE(BLANK(), 1, 2.5), "IsB", ISBLANK(BLANK()), "IsB0", ISBLANK(0), "IsBE", ISBLANK(""), "IsNum", ISNUMBER(1.5), "IsNumB", ISNUMBER(BLANK()), "IsNumT", ISNUMBER("1"), "IsNumBool", ISNUMBER(TRUE()), "IsNumCur", ISNUMBER(CURRENCY(1)), "IsNumDate", ISNUMBER(DATE(2024, 1, 1)), "IsText", ISTEXT("a"), "IsTextB", ISTEXT(BLANK()), "IsTextE", ISTEXT(""), "IsLog", ISLOGICAL(FALSE()), "IsLogB", ISLOGICAL(BLANK()), "IfErr", IFERROR(1 / 0, 5), "IfErr2", IFERROR(VALUE("x"), -1), "IsErr", ISERROR(VALUE("x")), "IsErr2", ISERROR(1), "IsEmpty", ISEMPTY(FILTER(Customer, Customer[Name] = "Zed")), "IsEmpty2", ISEMPTY(Customer))
+expected:
+  ordered: false
+  columns:
+    '[Div]': decimal
+    '[DivInt]': decimal
+    '[DivZero]': decimal
+    '[DivZeroAlt]': decimal
+    '[DivBlankDen]': decimal
+    '[DivBlankNum]': decimal
+    '[DivCur]': currency
+    '[DivCurCur]': decimal
+    '[DivZeroZero]': decimal
+    '[Sw]': string
+    '[SwElse]': string
+    '[SwNoElse]': string
+    '[SwBlank0]': string
+    '[SwBlankText]': string
+    '[SwTrue]': string
+    '[SwMixed]': decimal
+    '[SwText]': string
+    '[Co]': integer
+    '[CoAll]': integer
+    '[CoMix]': decimal
+    '[IsB]': boolean
+    '[IsB0]': boolean
+    '[IsBE]': boolean
+    '[IsNum]': boolean
+    '[IsNumB]': boolean
+    '[IsNumT]': boolean
+    '[IsNumBool]': boolean
+    '[IsNumCur]': boolean
+    '[IsNumDate]': boolean
+    '[IsText]': boolean
+    '[IsTextB]': boolean
+    '[IsTextE]': boolean
+    '[IsLog]': boolean
+    '[IsLogB]': boolean
+    '[IfErr]': decimal
+    '[IfErr2]': decimal
+    '[IsErr]': boolean
+    '[IsErr2]': boolean
+    '[IsEmpty]': boolean
+    '[IsEmpty2]': boolean
+  rows:
+  - [3.5, 2, null, -1, 9, null, 3.5, 3.5, null, b, c, null, other, other, y, 1, lower,
+    3, null, 1, true, false, false, true, false, false, false, true, true, true, false, true, true, false,
+    5, -1, true, false, true, false]

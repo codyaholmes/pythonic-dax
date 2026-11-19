@@ -1,0 +1,140 @@
+id: library-format
+description: >-
+  FORMAT with custom number formats (placeholders, thousands, scaling commas, percent, sections, quoted
+  text, scientific), named formats, and date tokens. Numbers round half away from zero. BLANK formats
+  as empty text, text is returned unchanged, TRUE formats as -1, and a number with a date format is a
+  serial date.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+  relationships: []
+python: |
+  from pythonic_dax.expr import coerce as c
+  result = model.evaluate(ROW(
+      'N0', FORMAT(c(1234.5), '0'),
+      'N2', FORMAT(c(1234.567), '0.00'),
+      'Thou', FORMAT(c(1234567.891), '#,##0.00'),
+      'Thou0', FORMAT(c(1234567.5), '#,##0'),
+      'Hash', FORMAT(c(0.5), '#.##'),
+      'Hash0', FORMAT(c(0), '#.##'),
+      'Pct', FORMAT(c(0.256), '0.0%'),
+      'PctI', FORMAT(c(0.256), '0%'),
+      'Neg', FORMAT((-c(1234.5)), '#,##0.00'),
+      'Sect', FORMAT((-c(5)), '0;(0)'),
+      'SectZ', FORMAT(c(0), '0;(0);"zero"'),
+      'Lit', FORMAT(c(5), '"$"0.00'),
+      'Dollar', FORMAT(c(1234.5), '$#,##0.00'),
+      'Sci', FORMAT(c(1234.5), '0.00E+00'),
+      'Scale', FORMAT(c(1234567), '#,##0,,"M"'),
+      'Scale2', FORMAT(c(1234567), '#,##0.0,'),
+      'Gen', FORMAT(c(1234.5), 'General Number'),
+      'Cur', FORMAT(c(1234.5), 'Currency'),
+      'Fixed', FORMAT(c(1234.567), 'Fixed'),
+      'Std', FORMAT(c(1234.567), 'Standard'),
+      'Percent', FORMAT(c(0.1234), 'Percent'),
+      'Scientific', FORMAT(c(1234.5), 'Scientific'),
+      'Blank', FORMAT(BLANK(), '0.00'),
+      'Text', FORMAT('abc', '0.00'),
+      'Empty', FORMAT(c(1234.5), ''),
+      'Int', FORMAT(c(42), '0.0'),
+      'Round', FORMAT(c(2.5), '0'),
+      'Round2', FORMAT(c(0.125), '0.00'),
+      'Round3', FORMAT(c(1.005), '0.00'),
+      'NegRound', FORMAT((-c(2.5)), '0'),
+      'Ymd', FORMAT(DATE(c(2024), c(3), c(5)), 'yyyy-mm-dd'),
+      'Mdy', FORMAT(DATE(c(2024), c(3), c(5)), 'm/d/yyyy'),
+      'Mmm', FORMAT(DATE(c(2024), c(3), c(5)), 'mmm'),
+      'Mmmm', FORMAT(DATE(c(2024), c(3), c(5)), 'mmmm yyyy'),
+      'Ddd', FORMAT(DATE(c(2024), c(3), c(5)), 'ddd'),
+      'Dddd', FORMAT(DATE(c(2024), c(3), c(5)), 'dddd, d mmmm'),
+      'Q', FORMAT(DATE(c(2024), c(8), c(5)), '"Q"q yyyy'),
+      'Yy', FORMAT(DATE(c(2024), c(3), c(5)), 'yy'),
+      'Time', FORMAT((DATE(c(2024), c(3), c(5)) + TIME(c(13), c(4), c(5))), 'hh:nn:ss'),
+      'AmPm', FORMAT((DATE(c(2024), c(3), c(5)) + TIME(c(13), c(4), c(5))), 'h:nn AM/PM'),
+      'HMm', FORMAT(TIME(c(13), c(4), c(5)), 'hh:mm'),
+      'ShortDate', FORMAT(DATE(c(2024), c(3), c(5)), 'Short Date'),
+      'LongDate', FORMAT(DATE(c(2024), c(3), c(5)), 'Long Date'),
+      'GenDate', FORMAT((DATE(c(2024), c(3), c(5)) + TIME(c(13), c(4), c(5))), 'General Date'),
+      'DateBlank', FORMAT(BLANK(), 'yyyy'),
+      'NumAsDate', FORMAT(c(45000), 'yyyy-mm-dd'),
+      'DateNoFmt', FORMAT(DATE(c(2024), c(3), c(5)), ''),
+      'BoolF', FORMAT(TRUE(), '0'),
+      'CurNum', FORMAT(CURRENCY(c(1234.5)), '#,##0.00'),
+      'IntThou', FORMAT(c(1234567), '#,##0'),
+      'SmallSci', FORMAT(c(0.000123), '0.00E+00'),
+      'BigNum', FORMAT(c(123456789012), '0'),
+  ))
+dax: |
+  EVALUATE
+      ROW("N0", FORMAT(1234.5, "0"), "N2", FORMAT(1234.567, "0.00"), "Thou", FORMAT(1234567.891, "#,##0.00"), "Thou0", FORMAT(1234567.5, "#,##0"), "Hash", FORMAT(0.5, "#.##"), "Hash0", FORMAT(0, "#.##"), "Pct", FORMAT(0.256, "0.0%"), "PctI", FORMAT(0.256, "0%"), "Neg", FORMAT(-1234.5, "#,##0.00"), "Sect", FORMAT(-5, "0;(0)"), "SectZ", FORMAT(0, "0;(0);""zero"""), "Lit", FORMAT(5, """$""0.00"), "Dollar", FORMAT(1234.5, "$#,##0.00"), "Sci", FORMAT(1234.5, "0.00E+00"), "Scale", FORMAT(1234567, "#,##0,,""M"""), "Scale2", FORMAT(1234567, "#,##0.0,"), "Gen", FORMAT(1234.5, "General Number"), "Cur", FORMAT(1234.5, "Currency"), "Fixed", FORMAT(1234.567, "Fixed"), "Std", FORMAT(1234.567, "Standard"), "Percent", FORMAT(0.1234, "Percent"), "Scientific", FORMAT(1234.5, "Scientific"), "Blank", FORMAT(BLANK(), "0.00"), "Text", FORMAT("abc", "0.00"), "Empty", FORMAT(1234.5, ""), "Int", FORMAT(42, "0.0"), "Round", FORMAT(2.5, "0"), "Round2", FORMAT(0.125, "0.00"), "Round3", FORMAT(1.005, "0.00"), "NegRound", FORMAT(-2.5, "0"), "Ymd", FORMAT(DATE(2024, 3, 5), "yyyy-mm-dd"), "Mdy", FORMAT(DATE(2024, 3, 5), "m/d/yyyy"), "Mmm", FORMAT(DATE(2024, 3, 5), "mmm"), "Mmmm", FORMAT(DATE(2024, 3, 5), "mmmm yyyy"), "Ddd", FORMAT(DATE(2024, 3, 5), "ddd"), "Dddd", FORMAT(DATE(2024, 3, 5), "dddd, d mmmm"), "Q", FORMAT(DATE(2024, 8, 5), """Q""q yyyy"), "Yy", FORMAT(DATE(2024, 3, 5), "yy"), "Time", FORMAT(DATE(2024, 3, 5) + TIME(13, 4, 5), "hh:nn:ss"), "AmPm", FORMAT(DATE(2024, 3, 5) + TIME(13, 4, 5), "h:nn AM/PM"), "HMm", FORMAT(TIME(13, 4, 5), "hh:mm"), "ShortDate", FORMAT(DATE(2024, 3, 5), "Short Date"), "LongDate", FORMAT(DATE(2024, 3, 5), "Long Date"), "GenDate", FORMAT(DATE(2024, 3, 5) + TIME(13, 4, 5), "General Date"), "DateBlank", FORMAT(BLANK(), "yyyy"), "NumAsDate", FORMAT(45000, "yyyy-mm-dd"), "DateNoFmt", FORMAT(DATE(2024, 3, 5), ""), "BoolF", FORMAT(TRUE(), "0"), "CurNum", FORMAT(CURRENCY(1234.5), "#,##0.00"), "IntThou", FORMAT(1234567, "#,##0"), "SmallSci", FORMAT(0.000123, "0.00E+00"), "BigNum", FORMAT(123456789012, "0"))
+expected:
+  ordered: false
+  columns:
+    '[N0]': string
+    '[N2]': string
+    '[Thou]': string
+    '[Thou0]': string
+    '[Hash]': string
+    '[Hash0]': string
+    '[Pct]': string
+    '[PctI]': string
+    '[Neg]': string
+    '[Sect]': string
+    '[SectZ]': string
+    '[Lit]': string
+    '[Dollar]': string
+    '[Sci]': string
+    '[Scale]': string
+    '[Scale2]': string
+    '[Gen]': string
+    '[Cur]': string
+    '[Fixed]': string
+    '[Std]': string
+    '[Percent]': string
+    '[Scientific]': string
+    '[Blank]': string
+    '[Text]': string
+    '[Empty]': string
+    '[Int]': string
+    '[Round]': string
+    '[Round2]': string
+    '[Round3]': string
+    '[NegRound]': string
+    '[Ymd]': string
+    '[Mdy]': string
+    '[Mmm]': string
+    '[Mmmm]': string
+    '[Ddd]': string
+    '[Dddd]': string
+    '[Q]': string
+    '[Yy]': string
+    '[Time]': string
+    '[AmPm]': string
+    '[HMm]': string
+    '[ShortDate]': string
+    '[LongDate]': string
+    '[GenDate]': string
+    '[DateBlank]': string
+    '[NumAsDate]': string
+    '[DateNoFmt]': string
+    '[BoolF]': string
+    '[CurNum]': string
+    '[IntThou]': string
+    '[SmallSci]': string
+    '[BigNum]': string
+  rows:
+  - ['1235', '1234.57', '1,234,567.89', '1,234,568', '.5', ., 25.6%, 26%, '-1,234.50',
+    (5), zero, $5.00, '$1,234.50', '1.23E+03', 1M, '1,234,567.0', '1234.5', '$1,234.50', '1234.57', '1,234.57',
+    12.34%, '1.23E+03', '', abc, '1234.5', '42.0', '3', '0.13', '1.01', '-3', '2024-03-05', 3/5/2024,
+    Mar, March 2024, Tue, 'Tuesday, 5 March', Q3 2024, '24', '13:04:05', '1:04 PM', '13:04', 3/5/2024,
+    'Tuesday, March 5, 2024', '3/5/2024 1:04:05 PM', '', '2023-03-15', 3/5/2024, '-1', '1,234.50', '1,234,567',
+    '1.23E-04', '123456789012']

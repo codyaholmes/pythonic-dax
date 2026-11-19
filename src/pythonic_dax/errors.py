@@ -31,3 +31,10 @@ class NotSupportedError(NotImplementedError):
         self.phase = phase
         where = " (planned for a later phase)" if phase is None else f" (planned for Phase {phase})"
         super().__init__(f"{feature} is not supported yet{where}.")
+
+
+class CalculationError(DaxError):
+    """An error while calculating a value, which IFERROR and ISERROR catch.
+
+    Examples: ``SQRT(-1)``, ``MOD(1, 0)``, ``VALUE("x")``, ``SEARCH`` not finding its text.
+    """

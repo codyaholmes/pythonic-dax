@@ -1,0 +1,121 @@
+id: library-dates
+description: >-
+  DATE rolls months and days over into the next year or month. TIME wraps past 24 hours. DATEVALUE and
+  TIMEVALUE read ISO and US text. WEEKDAY and WEEKNUM return types 1, 2, 3 and 21 (ISO). EDATE and EOMONTH
+  drop the time and clamp to the month's end. DATEDIFF counts boundaries; weeks start on Sunday. BLANK
+  gives BLANK.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+  relationships: []
+python: |
+  from pythonic_dax.expr import coerce as c
+  result = model.evaluate(ROW(
+      'D', DATE(c(2024), c(2), c(29)),
+      'DRoll', DATE(c(2024), c(13), c(1)),
+      'DDay', DATE(c(2024), c(1), c(32)),
+      'T', TIME(c(13), c(30), c(15)),
+      'TRoll', TIME(c(25), c(0), c(0)),
+      'DV', DATEVALUE('2024-03-05'),
+      'DV2', DATEVALUE('3/5/2024'),
+      'TV', TIMEVALUE('13:30'),
+      'TV2', TIMEVALUE('1:30 PM'),
+      'Y', YEAR(DATE(c(2024), c(3), c(5))),
+      'YB', YEAR(BLANK()),
+      'Mo', MONTH(DATE(c(2024), c(3), c(5))),
+      'Dy', DAY(DATE(c(2024), c(3), c(5))),
+      'H', HOUR(TIME(c(13), c(4), c(5))),
+      'Mi', MINUTE(TIME(c(13), c(4), c(5))),
+      'Sc', SECOND(TIME(c(13), c(4), c(5))),
+      'Q', QUARTER(DATE(c(2024), c(8), c(1))),
+      'QB', QUARTER(BLANK()),
+      'WD', WEEKDAY(DATE(c(2024), c(3), c(5))),
+      'WD2', WEEKDAY(DATE(c(2024), c(3), c(5)), c(2)),
+      'WD3', WEEKDAY(DATE(c(2024), c(3), c(5)), c(3)),
+      'WDB', WEEKDAY(BLANK()),
+      'WN', WEEKNUM(DATE(c(2024), c(1), c(6))),
+      'WN2', WEEKNUM(DATE(c(2024), c(1), c(7))),
+      'WNm', WEEKNUM(DATE(c(2024), c(1), c(7)), c(2)),
+      'WN21', WEEKNUM(DATE(c(2021), c(1), c(3)), c(21)),
+      'WNy', WEEKNUM(DATE(c(2023), c(12), c(31))),
+      'ED', EDATE(DATE(c(2024), c(1), c(31)), c(1)),
+      'EDt', EDATE((DATE(c(2024), c(1), c(31)) + TIME(c(6), c(0), c(0))), c(1)),
+      'EDn', EDATE(DATE(c(2024), c(3), c(31)), (-c(1))),
+      'EDB', EDATE(BLANK(), c(1)),
+      'EOM', EOMONTH(DATE(c(2024), c(1), c(15)), c(1)),
+      'EOMt', EOMONTH((DATE(c(2024), c(1), c(15)) + TIME(c(6), c(0), c(0))), c(0)),
+      'EOMn', EOMONTH(DATE(c(2024), c(3), c(15)), (-c(1))),
+      'EOMB', EOMONTH(BLANK(), c(0)),
+      'DD', DATEDIFF(DATE(c(2024), c(1), c(31)), DATE(c(2024), c(2), c(1)), MONTH),
+      'DDy', DATEDIFF(DATE(c(2023), c(12), c(31)), DATE(c(2024), c(1), c(1)), YEAR),
+      'DDw', DATEDIFF(DATE(c(2024), c(3), c(2)), DATE(c(2024), c(3), c(3)), WEEK),
+      'DDq', DATEDIFF(DATE(c(2024), c(3), c(31)), DATE(c(2024), c(4), c(1)), QUARTER),
+      'DDd', DATEDIFF((DATE(c(2024), c(1), c(1)) + TIME(c(23), c(0), c(0))), DATE(c(2024), c(1), c(2)), DAY),
+      'DDh', DATEDIFF(TIME(c(1), c(59), c(0)), TIME(c(2), c(0), c(0)), HOUR),
+      'DDneg', DATEDIFF(DATE(c(2024), c(2), c(1)), DATE(c(2024), c(1), c(1)), DAY),
+      'DDB', DATEDIFF(BLANK(), DATE(c(2024), c(1), c(1)), DAY),
+  ))
+dax: |
+  EVALUATE
+      ROW("D", DATE(2024, 2, 29), "DRoll", DATE(2024, 13, 1), "DDay", DATE(2024, 1, 32), "T", TIME(13, 30, 15), "TRoll", TIME(25, 0, 0), "DV", DATEVALUE("2024-03-05"), "DV2", DATEVALUE("3/5/2024"), "TV", TIMEVALUE("13:30"), "TV2", TIMEVALUE("1:30 PM"), "Y", YEAR(DATE(2024, 3, 5)), "YB", YEAR(BLANK()), "Mo", MONTH(DATE(2024, 3, 5)), "Dy", DAY(DATE(2024, 3, 5)), "H", HOUR(TIME(13, 4, 5)), "Mi", MINUTE(TIME(13, 4, 5)), "Sc", SECOND(TIME(13, 4, 5)), "Q", QUARTER(DATE(2024, 8, 1)), "QB", QUARTER(BLANK()), "WD", WEEKDAY(DATE(2024, 3, 5)), "WD2", WEEKDAY(DATE(2024, 3, 5), 2), "WD3", WEEKDAY(DATE(2024, 3, 5), 3), "WDB", WEEKDAY(BLANK()), "WN", WEEKNUM(DATE(2024, 1, 6)), "WN2", WEEKNUM(DATE(2024, 1, 7)), "WNm", WEEKNUM(DATE(2024, 1, 7), 2), "WN21", WEEKNUM(DATE(2021, 1, 3), 21), "WNy", WEEKNUM(DATE(2023, 12, 31)), "ED", EDATE(DATE(2024, 1, 31), 1), "EDt", EDATE(DATE(2024, 1, 31) + TIME(6, 0, 0), 1), "EDn", EDATE(DATE(2024, 3, 31), -1), "EDB", EDATE(BLANK(), 1), "EOM", EOMONTH(DATE(2024, 1, 15), 1), "EOMt", EOMONTH(DATE(2024, 1, 15) + TIME(6, 0, 0), 0), "EOMn", EOMONTH(DATE(2024, 3, 15), -1), "EOMB", EOMONTH(BLANK(), 0), "DD", DATEDIFF(DATE(2024, 1, 31), DATE(2024, 2, 1), MONTH), "DDy", DATEDIFF(DATE(2023, 12, 31), DATE(2024, 1, 1), YEAR), "DDw", DATEDIFF(DATE(2024, 3, 2), DATE(2024, 3, 3), WEEK), "DDq", DATEDIFF(DATE(2024, 3, 31), DATE(2024, 4, 1), QUARTER), "DDd", DATEDIFF(DATE(2024, 1, 1) + TIME(23, 0, 0), DATE(2024, 1, 2), DAY), "DDh", DATEDIFF(TIME(1, 59, 0), TIME(2, 0, 0), HOUR), "DDneg", DATEDIFF(DATE(2024, 2, 1), DATE(2024, 1, 1), DAY), "DDB", DATEDIFF(BLANK(), DATE(2024, 1, 1), DAY))
+expected:
+  ordered: false
+  columns:
+    '[D]': datetime
+    '[DRoll]': datetime
+    '[DDay]': datetime
+    '[T]': datetime
+    '[TRoll]': datetime
+    '[DV]': datetime
+    '[DV2]': datetime
+    '[TV]': datetime
+    '[TV2]': datetime
+    '[Y]': integer
+    '[YB]': integer
+    '[Mo]': integer
+    '[Dy]': integer
+    '[H]': integer
+    '[Mi]': integer
+    '[Sc]': integer
+    '[Q]': integer
+    '[QB]': integer
+    '[WD]': integer
+    '[WD2]': integer
+    '[WD3]': integer
+    '[WDB]': integer
+    '[WN]': integer
+    '[WN2]': integer
+    '[WNm]': integer
+    '[WN21]': integer
+    '[WNy]': integer
+    '[ED]': datetime
+    '[EDt]': datetime
+    '[EDn]': datetime
+    '[EDB]': datetime
+    '[EOM]': datetime
+    '[EOMt]': datetime
+    '[EOMn]': datetime
+    '[EOMB]': datetime
+    '[DD]': integer
+    '[DDy]': integer
+    '[DDw]': integer
+    '[DDq]': integer
+    '[DDd]': integer
+    '[DDh]': integer
+    '[DDneg]': integer
+    '[DDB]': integer
+  rows:
+  - ['2024-02-29T00:00:00', '2025-01-01T00:00:00', '2024-02-01T00:00:00', '1899-12-30T13:30:15',
+    '1899-12-30T01:00:00', '2024-03-05T00:00:00', '2024-03-05T00:00:00', '1899-12-30T13:30:00', '1899-12-30T13:30:00',
+    2024, null, 3, 5, 13, 4, 5, 3, null, 3, 2, 1, null, 1, 2, 1, 53, 53, '2024-02-29T00:00:00', '2024-02-29T00:00:00',
+    '2024-02-29T00:00:00', null, '2024-02-29T00:00:00', '2024-01-31T00:00:00', '2024-02-29T00:00:00',
+    null, 1, 1, 1, 1, 1, 1, -31, null]

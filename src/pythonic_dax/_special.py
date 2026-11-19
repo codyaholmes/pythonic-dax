@@ -40,6 +40,7 @@ __all__ = [
     "DATATABLE",
     "GROUPBY",
     "IN",
+    "INFO",
     "LOOKUPVALUE",
     "MAX",
     "MIN",
@@ -423,3 +424,37 @@ def DATATABLE(columns: dict[str, Any], rows: list[list[Any]]) -> TableExpr:
             raise DaxError("DATATABLE: values must be constants.")
         out.append(values)  # type: ignore[arg-type]
     return _DataTable(cols, out)
+
+
+# --- INFO functions -----------------------------------------------------------------
+
+
+class _InfoView:
+    """``INFO.VIEW.TABLES()`` and friends: the model's metadata as tables."""
+
+    def TABLES(self) -> TableExpr:
+        """DAX ``INFO.VIEW.TABLES()``: one row per table of the model."""
+        return TableCall("INFO.VIEW.TABLES", [])
+
+    def COLUMNS(self) -> TableExpr:
+        """DAX ``INFO.VIEW.COLUMNS()``: one row per column of the model."""
+        return TableCall("INFO.VIEW.COLUMNS", [])
+
+    def MEASURES(self) -> TableExpr:
+        """DAX ``INFO.VIEW.MEASURES()``: one row per measure of the model."""
+        return TableCall("INFO.VIEW.MEASURES", [])
+
+    def RELATIONSHIPS(self) -> TableExpr:
+        """DAX ``INFO.VIEW.RELATIONSHIPS()``: one row per relationship of the model."""
+        return TableCall("INFO.VIEW.RELATIONSHIPS", [])
+
+
+class _Info:
+    """The DAX INFO functions. Only the ``INFO.VIEW`` family is supported."""
+
+    VIEW = _InfoView()
+
+
+INFO = _Info()
+"""``INFO.VIEW.TABLES()``, ``INFO.VIEW.COLUMNS()``, ``INFO.VIEW.MEASURES()`` and
+``INFO.VIEW.RELATIONSHIPS()``, as in DAX."""

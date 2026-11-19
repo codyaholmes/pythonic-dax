@@ -1,0 +1,65 @@
+id: library-errors
+description: >-
+  IFERROR and ISERROR treat infinity and NaN results, SQRT of a negative, LN(0), MOD by 0 and SEARCH not
+  finding its text as errors. Arithmetic inside an expression doesn't fail (1/0 > 5 is TRUE). IFERROR
+  unifies the types of its two values. Infinity and NaN as text.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+  relationships: []
+python: |
+  from pythonic_dax.expr import coerce as c
+  result = model.evaluate(ROW(
+      'IsErrInf', ISERROR((c(1) / c(0))),
+      'IfErrNaN', IFERROR((c(0) / c(0)), c(5)),
+      'IfErrNegInf', IFERROR(((-c(1)) / c(0)), c(5)),
+      'IfErrOk', IFERROR(c(3), c(5)),
+      'IfErrInt', IFERROR(c(3), c(5.5)),
+      'IfErrDivFn', IFERROR(DIVIDE(c(1), c(0)), c(5)),
+      'IfErrBlank', IFERROR(BLANK(), c(5)),
+      'IfErrMul', IFERROR((c(1E308) * c(10)), c(5)),
+      'IsErrSqrt', ISERROR(SQRT((-c(1)))),
+      'IsErrLn', ISERROR(LN(c(0))),
+      'IsErrSearch', ISERROR(SEARCH('z', 'a')),
+      'IsErrMod', ISERROR(MOD(c(1), c(0))),
+      'IsErrZeroDiv', ISERROR((c(0) / c(0))),
+      'Nested', IFERROR(IF(((c(1) / c(0)) > c(5)), c(1), c(2)), c(7)),
+      'InfText', ((c(1) / c(0))).concat(''),
+      'NegInfText', (((-c(1)) / c(0))).concat(''),
+      'NaNText', ((c(0) / c(0))).concat(''),
+  ))
+dax: |
+  EVALUATE
+      ROW("IsErrInf", ISERROR(1 / 0), "IfErrNaN", IFERROR(0 / 0, 5), "IfErrNegInf", IFERROR(-1 / 0, 5), "IfErrOk", IFERROR(3, 5), "IfErrInt", IFERROR(3, 5.5), "IfErrDivFn", IFERROR(DIVIDE(1, 0), 5), "IfErrBlank", IFERROR(BLANK(), 5), "IfErrMul", IFERROR(1e+308 * 10, 5), "IsErrSqrt", ISERROR(SQRT(-1)), "IsErrLn", ISERROR(LN(0)), "IsErrSearch", ISERROR(SEARCH("z", "a")), "IsErrMod", ISERROR(MOD(1, 0)), "IsErrZeroDiv", ISERROR(0 / 0), "Nested", IFERROR(IF(1 / 0 > 5, 1, 2), 7), "InfText", 1 / 0 & "", "NegInfText", -1 / 0 & "", "NaNText", 0 / 0 & "")
+expected:
+  ordered: false
+  columns:
+    '[IsErrInf]': boolean
+    '[IfErrNaN]': decimal
+    '[IfErrNegInf]': decimal
+    '[IfErrOk]': integer
+    '[IfErrInt]': decimal
+    '[IfErrDivFn]': decimal
+    '[IfErrBlank]': integer
+    '[IfErrMul]': decimal
+    '[IsErrSqrt]': boolean
+    '[IsErrLn]': boolean
+    '[IsErrSearch]': boolean
+    '[IsErrMod]': boolean
+    '[IsErrZeroDiv]': boolean
+    '[Nested]': integer
+    '[InfText]': string
+    '[NegInfText]': string
+    '[NaNText]': string
+  rows:
+  - [true, 5, 5, 3, 3, null, null, 5, true, true, true, true, true, 1, inf, -inf,
+    -nan(ind)]

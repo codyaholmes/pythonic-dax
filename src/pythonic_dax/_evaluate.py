@@ -4,7 +4,9 @@ Phase 3 built the evaluation core: filters flowing across relationships, the bas
 aggregations, operators, IF/AND/OR/NOT, VAR, measure references (with context
 transition), RELATED, RELATEDTABLE, calculated columns, ROW, and the simple form of
 SUMMARIZECOLUMNS. Phase 4 adds CALCULATE, CALCULATETABLE, the filter modifiers and the
-functions that inspect the filter context. Everything else raises
+functions that inspect the filter context. Phase 5 adds iterators, table and window
+functions (_iterators.py, _tables.py, _window.py), and Phase 6 the scalar function
+library (_library.py, _format.py). Everything else raises
 :class:`NotSupportedError` naming its phase.
 """
 
@@ -64,6 +66,10 @@ _COMPARISONS = ("=", "==", "<>", "<", "<=", ">", ">=", "IN", "&&", "||")
 _COUNTS = ("COUNT", "COUNTA", "COUNTBLANK", "COUNTROWS", "DISTINCTCOUNT", "DISTINCTCOUNTNOBLANK")
 
 
+LIBRARY_TYPES: dict[str, Callable[[list[Any]], StaticType]] = {}
+"""Result-type rules of the Phase 6 functions whose type depends on their arguments."""
+
+
 def infer_type(node: Any) -> StaticType:
     """The DAX type an expression returns, worked out without evaluating it."""
     if isinstance(node, Literal_):
@@ -92,6 +98,9 @@ def infer_type(node: Any) -> StaticType:
     if isinstance(node, Call):
         name = node.name
         args = node.args
+        rule = LIBRARY_TYPES.get(name)
+        if rule is not None:
+            return rule(args)
         if name == "BLANK":
             return BLANK_TYPE
         if name in ("TRUE", "FALSE", "AND", "OR", "NOT"):
@@ -1519,7 +1528,7 @@ EVALUATED = (
 
 
 def _register() -> None:
-    from . import _window
+    from . import _library, _window
     from ._iterators import SCALAR
     from ._tables import TABLES
 
@@ -1527,6 +1536,9 @@ def _register() -> None:
     _SCALAR_FUNCTIONS.update(_window.SCALAR)
     _TABLE_FUNCTIONS.update(TABLES)
     _TABLE_FUNCTIONS.update(_window.TABLES)
+    _SCALAR_FUNCTIONS.update(_library.SCALAR)
+    _TABLE_FUNCTIONS.update(_library.TABLES)
+    LIBRARY_TYPES.update(_library.TYPES)
 
 
 _register()
