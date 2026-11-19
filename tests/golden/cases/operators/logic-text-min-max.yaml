@@ -1,0 +1,43 @@
+id: logic-text-min-max
+description: BLANK & BLANK is BLANK. BLANK is FALSE in logic. IN compares strictly (BLANK doesn't match
+  0) but ignores case. Two-argument MIN treats BLANK as 0 yet returns BLANK when BLANK is smaller. IF
+  with a whole number and a decimal branch returns a decimal.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+python: |
+  from pythonic_dax.expr import coerce
+  result = model.evaluate(ROW(
+      "ConcatBlanks", BLANK().concat(BLANK()), "IntConcat", coerce(1).concat("x"),
+      "BoolConcat", TRUE().concat("x"), "BlankAnd", BLANK() & TRUE(), "NumberOr", coerce(2) | FALSE(),
+      "NotBlank", NOT(BLANK()), "BlankInZero", BLANK().IN([0]), "ZeroInBlank", coerce(0).IN([BLANK()]),
+      "CaseIn", coerce("a").IN(["A"]), "MinOneBlank", MIN(1, BLANK()), "MinNegBlank", MIN(-1, BLANK()),
+      "MaxBlanks", MAX(BLANK(), BLANK()), "IfBlank", IF(BLANK(), 1, 2), "IfNoElse", IF(FALSE(), 1),
+      "IfMixed", IF(TRUE(), 1, 1.5), "AndBlank", AND(BLANK(), TRUE()), "OrNumber", OR(0, 3),
+  ))
+dax: |
+  EVALUATE
+      ROW("ConcatBlanks", BLANK() & BLANK(), "IntConcat", 1 & "x", "BoolConcat", TRUE() & "x", "BlankAnd", BLANK() && TRUE(), "NumberOr", 2 || FALSE(), "NotBlank", NOT(BLANK()), "BlankInZero", BLANK() IN {0}, "ZeroInBlank", 0 IN {BLANK()}, "CaseIn", "a" IN {"A"}, "MinOneBlank", MIN(1, BLANK()), "MinNegBlank", MIN(-1, BLANK()), "MaxBlanks", MAX(BLANK(), BLANK()), "IfBlank", IF(BLANK(), 1, 2), "IfNoElse", IF(FALSE(), 1), "IfMixed", IF(TRUE(), 1, 1.5), "AndBlank", AND(BLANK(), TRUE()), "OrNumber", OR(0, 3))
+expected:
+  ordered: false
+  columns:
+    '[ConcatBlanks]': string
+    '[IntConcat]': string
+    '[BoolConcat]': string
+    '[BlankAnd]': boolean
+    '[NumberOr]': boolean
+    '[NotBlank]': boolean
+    '[BlankInZero]': boolean
+    '[ZeroInBlank]': boolean
+    '[CaseIn]': boolean
+    '[MinOneBlank]': integer
+    '[MinNegBlank]': integer
+    '[MaxBlanks]': integer
+    '[IfBlank]': integer
+    '[IfNoElse]': integer
+    '[IfMixed]': decimal
+    '[AndBlank]': boolean
+    '[OrNumber]': boolean
+  rows:
+  - [null, 1x, TRUEx, false, true, true, false, false, true, null, -1, null, 2, null,
+    1.0, false, true]

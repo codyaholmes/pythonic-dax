@@ -1,0 +1,77 @@
+id: calculated-columns-context-transition
+description: Calculated columns in Product. A measure, or RELATEDTABLE, turns the row into a filter (context
+  transition); a plain SUM sees every sale. Both columns are allowed because ProductKey is the one side
+  of a relationship.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  total = model.add_measure("Total", SUM(Sales["Amount"]), table="Sales")
+  model.add_column(Product, "Sales Rows", COUNTROWS(RELATEDTABLE(Sales)))
+  model.add_column(Product, "Total Col", total)
+  model.add_column(Product, "Grand", SUM(Sales["Amount"]))
+  result = model.evaluate(SUMMARIZECOLUMNS(
+      Product["ProductKey"], Product["Sales Rows"], Product["Total Col"], Product["Grand"],
+      {"N": COUNTROWS(Product)},
+  ))
+dax: |
+  DEFINE
+      COLUMN Product[Sales Rows] = COUNTROWS(RELATEDTABLE(Sales))
+      COLUMN Product[Total Col] = [Total]
+      COLUMN Product[Grand] = SUM(Sales[Amount])
+      MEASURE Sales[Total] = SUM(Sales[Amount])
+  EVALUATE
+      SUMMARIZECOLUMNS(Product[ProductKey], Product[Sales Rows], Product[Total Col], Product[Grand], "N", COUNTROWS(Product))
+expected:
+  ordered: false
+  columns:
+    Product[ProductKey]: integer
+    Product[Sales Rows]: integer
+    Product[Total Col]: decimal
+    Product[Grand]: decimal
+    '[N]': integer
+  rows:
+  - [1, 2, 15.5, 123.75, 1]
+  - [2, 1, 7.25, 123.75, 1]
+  - [3, null, null, 123.75, 1]
+  - [4, null, null, 123.75, 1]

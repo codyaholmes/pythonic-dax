@@ -91,9 +91,28 @@ print(model.to_dax_query(SUMMARIZECOLUMNS(Date["Year"], {"Avg": avg})))  # paste
   formula is written. Examples: a non-column argument to `SUM`, columns from two tables
   in a `CALCULATE` filter, `USERELATIONSHIP` on columns with no relationship.
 
-Evaluating expressions comes in Phase 3. Until then, `model.evaluate()` raises
-`NotSupportedError`. The engine never guesses at an answer that might differ from
-Power BI.
+**Phase 3 (evaluation core) is done.** `model.evaluate()` runs a query and returns a
+Polars DataFrame shaped like Power BI's `EVALUATE` result:
+
+```python
+total = model.add_measure("Total Sales", SUM(Sales["Amount"]), table="Sales")
+model.add_column(Product, "Sales Rows", COUNTROWS(RELATEDTABLE(Sales)))  # calculated column
+model.evaluate(SUMMARIZECOLUMNS(Product["Color"], {"Total": total}))
+# columns "Product[Color]" and "[Total]"; colors with no sales are left out
+```
+
+* **Filters across relationships:** from the one side to the many side, and back when a
+  relationship filters both ways. Unmatched keys land on the one side's hidden blank row.
+* **Evaluated so far:** `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `COUNTA`, `COUNTBLANK`,
+  `COUNTROWS`, `DISTINCTCOUNT`, `DISTINCTCOUNTNOBLANK`, `IF`, `AND`, `OR`, `NOT`, `BLANK`,
+  `TRUE`, `FALSE`, `VAR`, `IN`, every operator, measure references (with context
+  transition), `RELATED`, `RELATEDTABLE`, calculated columns, `ROW`, and
+  `SUMMARIZECOLUMNS` with group-by columns and named expressions.
+* **Checked against Power BI Desktop:** BLANK arithmetic, comparisons, currency types and
+  blank-row behavior come from queries run in Desktop (see `tests/golden/cases`).
+
+Anything else raises `NotSupportedError` naming the phase that brings it. The engine
+never guesses at an answer that might differ from Power BI.
 
 ## Development
 

@@ -1488,7 +1488,7 @@ def RELATED(column: Column) -> Expr:
 
     A value from the one side of a relationship.
 
-    Evaluated from Phase 4.
+    Evaluated from Phase 3.
     """
     return build("RELATED", [column])  # type: ignore[return-value]
 
@@ -1499,7 +1499,7 @@ def RELATEDTABLE(table: TableArg) -> TableExpr:
 
     The rows of a table related to the current row.
 
-    Evaluated from Phase 4.
+    Evaluated from Phase 3.
     """
     return build("RELATEDTABLE", [table])  # type: ignore[return-value]
 

@@ -1,0 +1,67 @@
+id: single-direction-filter
+description: A single-direction relationship doesn't filter Product from Customer through Sales, so every
+  customer sees all 4 products.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  products = model.add_measure("Products", COUNTROWS(Product), table="Sales")
+  total = model.add_measure("Total", SUM(Sales["Amount"]), table="Sales")
+  result = model.evaluate(SUMMARIZECOLUMNS(Customer["Name"], {"Products": products, "Total": total}))
+dax: |
+  DEFINE
+      MEASURE Sales[Products] = COUNTROWS(Product)
+      MEASURE Sales[Total] = SUM(Sales[Amount])
+  EVALUATE
+      SUMMARIZECOLUMNS(Customer[Name], "Products", [Products], "Total", [Total])
+expected:
+  ordered: false
+  columns:
+    Customer[Name]: string
+    '[Products]': integer
+    '[Total]': decimal
+  rows:
+  - [Ann, 4, 17.25]
+  - [Bob, 4, 105.5]
+  - [Cy, 4, 1]
+  - [Dee, 4, null]

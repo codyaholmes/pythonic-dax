@@ -1,0 +1,22 @@
+id: division-by-blank
+description: Dividing a number by BLANK or by 0 gives infinity with the number's sign, not an error or
+  BLANK.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+python: |
+  from pythonic_dax.expr import coerce
+  result = model.evaluate(ROW(
+      "PosInfinity", 1 / BLANK() > 1e300,
+      "NegInfinity", coerce(-1) / 0 < -1e300,
+  ))
+dax: |
+  EVALUATE
+      ROW("PosInfinity", 1 / BLANK() > 1e+300, "NegInfinity", -1 / 0 < -1e+300)
+expected:
+  ordered: false
+  columns:
+    '[PosInfinity]': boolean
+    '[NegInfinity]': boolean
+  rows:
+  - [true, true]

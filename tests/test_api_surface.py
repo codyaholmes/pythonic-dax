@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import polars as pl
 import pytest
 
 import pythonic_dax as pdax
@@ -23,9 +24,11 @@ def test_not_supported_is_a_not_implemented_error() -> None:
     assert issubclass(pdax.NotSupportedError, NotImplementedError)
 
 
-def test_evaluate_names_its_phase() -> None:
-    with pytest.raises(pdax.NotSupportedError, match="Phase 3"):
-        pdax.Model().evaluate(None)
+def test_unbuilt_function_names_its_phase() -> None:
+    model = pdax.Model()
+    model.add_table("T", pl.DataFrame({"x": [1]}))
+    with pytest.raises(pdax.NotSupportedError, match="Phase 6"):
+        model.evaluate(pdax.ROW("v", pdax.ABS(-1)))
 
 
 def test_planned_names_are_upper_case_dax_names() -> None:

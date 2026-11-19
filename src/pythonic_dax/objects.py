@@ -105,6 +105,7 @@ class Column(_Metadata, Expr):
         self.is_key = False
         self.is_nullable = True
         self.annotations: dict[str, str] = {}
+        self.expression: Any = None  # the DAX expression of a calculated column
 
     def set(self, **props: Any) -> Column:
         """Set metadata, for example ``col.set(description="A flag for voids.")``."""
@@ -162,11 +163,23 @@ class Column(_Metadata, Expr):
     def dax_type(self) -> DaxType:
         return self.data_type
 
+    @property
+    def is_calculated(self) -> bool:
+        """Whether this is a calculated column (see :meth:`Model.add_column`)."""
+        return self.expression is not None
+
+    def definition(self) -> str:
+        """The DAX query definition of a calculated column: ``COLUMN T[C] = ...``."""
+        if self.expression is None:
+            raise ValueError(f"{self.ref} is not a calculated column")
+        return f"COLUMN {self.ref} = {self.expression.to_dax()}"
+
     def _dax(self) -> tuple[str, int]:
         return self.ref, PREC_ATOM
 
     def __repr__(self) -> str:
-        return f"Column({self.ref}, {self.data_type.value})"
+        kind = "calculated, " if self.expression is not None else ""
+        return f"Column({self.ref}, {kind}{self.data_type.value})"
 
 
 class Table(_Metadata, TableExpr):
@@ -284,13 +297,20 @@ class Table(_Metadata, TableExpr):
                 ) from None
 
         if not first_load:
-            missing = [c.name for c in self._columns if c.name not in names]
+            missing = [
+                c.name for c in self._columns if c.expression is None and c.name not in names
+            ]
             if missing:
                 raise ModelError(f"table {self.name!r}: the source no longer has {missing}")
 
         series: list[pl.Series] = []
         for col_name in raw.columns:
             existing = self._columns.get(col_name)
+            if existing is not None and existing.expression is not None:
+                raise ModelError(
+                    f"table {self.name!r}: the source now has a column named {col_name!r}, "
+                    "which is the name of a calculated column"
+                )
             if existing is not None:
                 dax_type = existing.data_type
             else:

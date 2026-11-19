@@ -40,6 +40,7 @@ class Model:
         self._tables: NameMap[Table] = NameMap("table")
         self._measures: NameMap[Measure] = NameMap("measure")
         self._relationships: list[Relationship] = []
+        self._calculated: list[Column] = []
 
     # --- tables ---------------------------------------------------------------
 
@@ -107,6 +108,10 @@ class Model:
         try:
             for table in self._tables:
                 table._load({}, first_load=False)
+            for rel in self._relationships:
+                rel._invalidate()
+            for col in self._calculated:
+                self._compute_column(col)
             for rel in self._relationships:
                 rel._invalidate()
                 _check_keys(rel)
@@ -337,10 +342,10 @@ class Model:
         if node.kind != "table":
             raise TypeError("EVALUATE needs a table expression, such as SUMMARIZECOLUMNS(...)")
         lines: list[str] = []
-        order = {id(m): i for i, m in enumerate(self._measures)}
-        measures = sorted(measures_in(node), key=lambda m: order.get(id(m), len(order)))
-        if measures:
+        measures, columns = self._dependencies(node)
+        if measures or columns:
             lines.append("DEFINE")
+            lines += [f"    {c.definition()}" for c in columns]
             lines += [f"    {m.definition()}" for m in measures]
         lines += ["EVALUATE", f"    {node.to_dax()}"]
         if order_by:
@@ -356,9 +361,170 @@ class Model:
 
     # --- evaluation (Phase 3) ---------------------------------------------------
 
-    def evaluate(self, table_expression: Any) -> Any:
-        """Evaluate a table expression, like DAX ``EVALUATE``, and return a DataFrame."""
-        raise NotSupportedError("Model.evaluate", phase=3)
+    def evaluate(self, table_expression: Any) -> pl.DataFrame:
+        """Evaluate a table expression, like DAX ``EVALUATE``, and return a DataFrame.
+
+        Columns are named as Power BI names them: ``Product[Color]`` for a group-by
+        column and ``[Total]`` for a named expression. Rows come in no particular order.
+        Anything the engine can't yet reproduce exactly raises ``NotSupportedError``.
+        """
+        from ._evaluate import Evaluator
+
+        node = coerce_any(table_expression)
+        if node.kind != "table":
+            raise TypeError(
+                "EVALUATE needs a table expression, such as SUMMARIZECOLUMNS(...) or "
+                'ROW("Total", total)'
+            )
+        for col in columns_in(node):
+            if col.table.model is not self:
+                raise ModelError(f"{col.ref} belongs to a different model")
+        for m in measures_in(node):
+            if m.model is not self:
+                raise ModelError(f"{m.ref} belongs to a different model")
+        return Evaluator(self).evaluate(node)
+
+    def _dependencies(self, node: Any) -> tuple[list[Measure], list[Column]]:
+        """Measures and calculated columns an expression uses, directly or not, in
+        model order."""
+        measures: dict[int, Measure] = {}
+        columns: dict[int, Column] = {}
+
+        def visit(n: Any) -> None:
+            for sub in n.walk():
+                if getattr(sub, "is_measure_ref", False) and id(sub) not in measures:
+                    measures[id(sub)] = sub
+                    visit(sub.expression)
+                elif getattr(sub, "is_column_ref", False) and sub.expression is not None:
+                    if id(sub) not in columns:
+                        columns[id(sub)] = sub
+                        visit(sub.expression)
+
+        visit(node)
+        m_order = {id(m): i for i, m in enumerate(self._measures)}
+        c_order = {id(c): i for i, c in enumerate(self._calculated)}
+        return (
+            sorted(measures.values(), key=lambda m: m_order.get(id(m), len(m_order))),
+            sorted(columns.values(), key=lambda c: c_order.get(id(c), len(c_order))),
+        )
+
+    # --- calculated columns ------------------------------------------------------
+
+    def add_column(
+        self,
+        table: Table | str,
+        name: str,
+        expression: Any,
+        *,
+        data_type: DaxType | str | None = None,
+        description: str | None = None,
+        display_name: str | None = None,
+        format_string: str | None = None,
+        display_folder: str | None = None,
+        is_hidden: bool = False,
+        data_category: str | None = None,
+        summarize_by: str | None = None,
+        annotations: dict[str, str] | None = None,
+    ) -> Column:
+        """Add a calculated column, evaluated in the row context of each row.
+
+        As in Power BI, a measure or CALCULATE in the expression turns the current row
+        into a filter (context transition)::
+
+            model.add_column(Product, "Total Sales", total)    # per-product sales
+            model.add_column(Sales, "Color", RELATED(Product["Color"]))
+
+        Calculated columns are recomputed by :meth:`refresh`. ``data_type`` overrides
+        the type worked out from the expression.
+        """
+        home = self._tables[table] if isinstance(table, str) else table
+        if self._tables.get(home.name) is not home:
+            raise ModelError(f"{home.ref} is not a table of this model")
+        _check_name(name, "column")
+        if name in home:
+            raise ModelError(f"{home.ref} already has a column named {home[name].name!r}")
+        for m in self._measures:
+            if m.table is home and m.name.casefold() == name.casefold():
+                raise ModelError(f"{home.ref} already has a measure named {m.name!r}")
+
+        node = coerce_any(expression)
+        if node.kind != "scalar":
+            raise DaxError(f"a calculated column must return a single value, not {node.to_dax()}")
+        for col in columns_in(node):
+            if col.table.model is not self:
+                raise ModelError(f"{col.ref} belongs to a different model")
+        if _transitions(node) and self.row_identifier(home) is None:
+            for other in self._calculated:
+                if other.table is home and _transitions(other.expression):
+                    new_ref = f"{home.ref}[{name}]"
+                    raise DaxError(
+                        f"A circular dependency was detected: {new_ref}, {other.ref}, "
+                        f"{new_ref}. (Both calculated columns use context transition on a "
+                        "table with no unique key column. Mark one with is_key=True, or use "
+                        "the table as the one side of a relationship.)"
+                    )
+
+        from ._evaluate import BLANK_TYPE, infer_type
+
+        if data_type is not None:
+            dax_type = DaxType(data_type)
+        else:
+            inferred = infer_type(node)
+            dax_type = inferred if isinstance(inferred, DaxType) else None  # type: ignore[assignment]
+        column = Column(home, name, dax_type or DaxType.STRING)
+        column.expression = node
+        values = self._column_values(column)
+        if dax_type is None:
+            from ._evaluate import _type_of
+
+            if inferred == BLANK_TYPE and all(v is None for v in values):
+                raise NotSupportedError("a calculated column that is always BLANK")
+            dax_type = _type_of(values)
+            column.data_type = dax_type
+            column.summarize_by = "sum" if dax_type.is_numeric else "none"
+        column.set(
+            description=description,
+            display_name=display_name,
+            format_string=format_string,
+            display_folder=display_folder,
+            is_hidden=is_hidden,
+            data_category=data_category,
+            annotations=dict(annotations or {}),
+        )
+        if summarize_by is not None:
+            column.summarize_by = summarize_by
+        home._columns.add(name, column)
+        home._data = home._data.with_columns(_series(column, values))
+        self._calculated.append(column)
+        for rel in self._relationships:
+            rel._invalidate()
+        return column
+
+    def row_identifier(self, table: Table) -> Column | None:
+        """A column that identifies each row of ``table``: one marked ``is_key``, or the
+        table's key in a relationship where it is the one side.
+
+        Context transition in a calculated column filters only this column when there
+        is one, which is why Power BI allows several such columns without a circular
+        dependency.
+        """
+        for col in table.columns:
+            if col.is_key and col.expression is None:
+                return col
+        for rel in self._relationships:
+            if rel.to_table is table and rel.cardinality is not Cardinality.MANY_TO_MANY:
+                return rel.to_column
+        return None
+
+    def _column_values(self, column: Column) -> list[Any]:
+        from ._evaluate import Evaluator
+
+        assert column.expression is not None
+        return Evaluator(self, computing=column).column_values(column.table, column.expression)
+
+    def _compute_column(self, column: Column) -> None:
+        values = self._column_values(column)
+        column.table._data = column.table._data.with_columns(_series(column, values))
 
     # --- metadata ---------------------------------------------------------------
 
@@ -465,6 +631,30 @@ class Model:
             f"Model({len(self._tables)} tables, {len(self._relationships)} relationships, "
             f"{len(self._measures)} measures)"
         )
+
+
+def _transitions(node: Any) -> bool:
+    """Whether a calculated column's expression does context transition."""
+    for n in node.walk():
+        if getattr(n, "is_measure_ref", False):
+            return True
+        if getattr(n, "name", None) in ("CALCULATE", "CALCULATETABLE", "RELATEDTABLE") and hasattr(
+            n, "args"
+        ):
+            return True
+    return False
+
+
+def _series(column: Column, values: list[Any]) -> pl.Series:
+    from ._evaluate import convert
+
+    values = [convert(v, column.data_type) for v in values]
+    try:
+        return pl.Series(column.name, values, dtype=column.data_type.polars_dtype, strict=True)
+    except (TypeError, pl.exceptions.PolarsError):
+        raise DaxError(
+            f"the values of {column.ref} don't fit its data type {column.data_type.value}"
+        ) from None
 
 
 def _check_name(name: str, kind: str) -> None:

@@ -34,6 +34,9 @@ DAX_TYPES: dict[str, pl.DataType] = {
     "boolean": pl.Boolean(),  # True/False
 }
 
+DAX_NAMES = {"date": "datetime"}
+DAX_NAMES.update({t: t for t in DAX_TYPES if t != "date"})
+
 _COLUMN_REF = re.compile(r"^'?(?P<table>[^'\[]+)'?\[(?P<column>[^\]]+)\]$")
 
 # Doubles from Power BI are compared with a tight tolerance; everything else is exact.
@@ -194,7 +197,8 @@ def run_case(case: Case, run: Run | None = None) -> pl.DataFrame:
 
     for name, table in case.tables.items():
         frame = build_frame(table["columns"], table.get("rows") or [])
-        namespace[_identifier(name)] = model.add_table(name, frame)
+        types = {col: {"data_type": DAX_NAMES[t]} for col, t in table["columns"].items()}
+        namespace[_identifier(name)] = model.add_table(name, frame, columns=types)
 
     for rel in case.relationships:
         f_table, f_col = parse_column_ref(rel["from"])
