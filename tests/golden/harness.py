@@ -94,6 +94,10 @@ def load_case(path: Path) -> Case:
     model = raw.get("model") or {}
     tables = model.get("tables") or {}
     for name, table in tables.items():
+        if "calendar" in table:
+            if "columns" in table or "rows" in table:
+                raise CaseFormatError(f"{path.name}: {name} has a calendar and its own rows")
+            table.update(_calendar(table["calendar"]))
         for col, dax_type in table["columns"].items():
             if dax_type not in DAX_TYPES:
                 raise CaseFormatError(f"{path.name}: {name}[{col}] has unknown type {dax_type!r}")
@@ -135,6 +139,28 @@ def load_case(path: Path) -> Case:
         reference=raw.get("reference"),
         powerbi_version=raw.get("powerbi_version"),
     )
+
+
+def _calendar(spec: dict[str, Any]) -> dict[str, Any]:
+    """The columns and rows of a ``calendar:`` table: one row per day from ``start`` to
+    ``end``, with Year, Quarter, MonthNo and Month ("2024-03") columns. In Power BI it is
+    ``ADDCOLUMNS(CALENDAR(start, end), "Year", YEAR([Date]), "Quarter", QUARTER([Date]),
+    "MonthNo", MONTH([Date]), "Month", FORMAT([Date], "yyyy-mm"))``."""
+    start, end = spec["start"], spec["end"]
+    if not isinstance(start, dt.date) or not isinstance(end, dt.date) or start > end:
+        raise CaseFormatError(f"calendar needs a start and an end date, got {spec!r}")
+    rows = []
+    for i in range((end - start).days + 1):
+        d = start + dt.timedelta(days=i)
+        rows.append([d, d.year, (d.month - 1) // 3 + 1, d.month, f"{d.year}-{d.month:02d}"])
+    columns = {
+        "Date": "date",
+        "Year": "integer",
+        "Quarter": "integer",
+        "MonthNo": "integer",
+        "Month": "string",
+    }
+    return {"columns": columns, "rows": rows}
 
 
 def discover_cases(root: Path = CASES_DIR) -> list[Case]:
@@ -198,7 +224,10 @@ def run_case(case: Case, run: Run | None = None) -> pl.DataFrame:
     for name, table in case.tables.items():
         frame = build_frame(table["columns"], table.get("rows") or [])
         types = {col: {"data_type": DAX_NAMES[t]} for col, t in table["columns"].items()}
-        namespace[_identifier(name)] = model.add_table(name, frame, columns=types)
+        added = model.add_table(name, frame, columns=types)
+        if table.get("date_table"):
+            added.mark_as_date_table(table["date_table"])
+        namespace[_identifier(name)] = added
 
     for rel in case.relationships:
         f_table, f_col = parse_column_ref(rel["from"])

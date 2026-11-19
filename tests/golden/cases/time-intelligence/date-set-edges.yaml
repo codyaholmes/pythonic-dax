@@ -1,0 +1,136 @@
+id: time-intelligence-date-set-edges
+description: >-
+  DATEADD, SAMEPERIODLASTYEAR and DATESINPERIOD at month ends and leap days. A range of several dates
+  ending on a month's last day shifts to the end of the target month; a single date doesn't. A set with
+  gaps shifts date by date. DATESINPERIOD from a month's last day counts whole months. On a column with
+  gaps between its dates (Txn[TxnDate]), the visible dates still shift as a range and only existing dates
+  come back.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Dates:
+      calendar:
+        start: 2023-01-01
+        end: 2024-12-31
+    Txn:
+      columns:
+        TxnID: integer
+        TxnDate: date
+        Amount: decimal
+      rows:
+      - [1, 2023-01-15, 100.0]
+      - [2, 2023-02-28, 40.0]
+      - [3, 2023-03-31, 25.0]
+      - [4, 2023-06-30, 60.0]
+      - [5, 2023-10-05, 80.0]
+      - [6, 2023-12-31, 30.0]
+      - [7, 2024-01-01, 10.0]
+      - [8, 2024-01-31, 45.0]
+      - [9, 2024-02-29, 20.0]
+      - [10, 2024-03-01, 15.0]
+      - [11, 2024-04-30, 70.0]
+      - [12, 2024-07-04, 35.0]
+      - [13, 2024-12-31, 50.0]
+  relationships:
+  - from: Txn[TxnDate]
+    to: Dates[Date]
+python: |
+  d = Dates["Date"]
+  total = model.add_measure("TxnTotal", SUM(Txn["Amount"]), table="Txn")
+
+
+  def span(t, col=d):
+      """First..last date and row count of a table of dates, as text."""
+      first = FORMAT(MINX(t, col), "yyyy-mm-dd")
+      last = FORMAT(MAXX(t, col), "yyyy-mm-dd")
+      return first.concat("..").concat(last).concat("#").concat(COUNTROWS(t))
+
+  t = Txn["TxnDate"]
+
+
+  def between(a, b):
+      return DATESBETWEEN(d, DATE(*a), DATE(*b))
+
+
+  cases = {
+      "A": (DATEADD(d, -1, MONTH), between((2024, 2, 15), (2024, 2, 29))),
+      "B": (DATEADD(d, 1, MONTH), between((2024, 2, 15), (2024, 2, 29))),
+      "C": (DATEADD(d, -1, MONTH), between((2024, 2, 28), (2024, 2, 29))),
+      "D": (DATEADD(d, 1, MONTH), between((2024, 1, 30), (2024, 1, 31))),
+      "E": (DATEADD(d, 1, MONTH), between((2024, 1, 31), (2024, 1, 31))),
+      "F": (DATEADD(d, -1, MONTH), between((2024, 4, 1), (2024, 4, 30))),
+      "G": (DATEADD(d, -1, MONTH), between((2024, 4, 30), (2024, 4, 30))),
+      "H": (DATEADD(d, -1, MONTH), between((2024, 4, 16), (2024, 4, 30))),
+      "I": (DATEADD(d, -1, MONTH), d.IN([DATE(2024, 2, 10), DATE(2024, 2, 29)])),
+      "J": (SAMEPERIODLASTYEAR(d), between((2024, 2, 28), (2024, 2, 29))),
+      "K": (SAMEPERIODLASTYEAR(d), between((2024, 2, 1), (2024, 2, 28))),
+      "L": (DATEADD(d, 1, YEAR), between((2023, 2, 1), (2023, 2, 28))),
+      "M": (DATEADD(d, 1, YEAR), between((2023, 2, 28), (2023, 2, 28))),
+      "N": (DATEADD(d, 1, YEAR), between((2023, 2, 15), (2023, 2, 28))),
+      "O": (DATEADD(d, 1, MONTH), between((2024, 1, 31), (2024, 2, 2))),
+      "P": (DATEADD(d, -1, MONTH), between((2024, 3, 30), (2024, 3, 31))),
+      "Q": (DATEADD(d, -1, MONTH), d.IN([DATE(2024, 3, 31), DATE(2024, 4, 30)])),
+      "R": (DATEADD(d, 2, MONTH), between((2023, 12, 31), (2023, 12, 31))),
+      "S1": (DATESINPERIOD(d, DATE(2024, 4, 30), -1, MONTH), None),
+      "S2": (DATESINPERIOD(d, DATE(2024, 2, 28), -1, MONTH), None),
+      "S3": (DATESINPERIOD(d, DATE(2024, 1, 31), 1, MONTH), None),
+      "S4": (DATESINPERIOD(d, DATE(2023, 2, 28), 1, YEAR), None),
+      "S5": (DATESINPERIOD(d, DATE(2024, 2, 29), -1, YEAR), None),
+      "T1": (DATEADD(t, -1, YEAR), None),
+      "T2": (DATESYTD(t), Dates["Month"] == "2024-02"),
+      "T3": (DATEADD(t, 1, MONTH), Dates["Month"] == "2024-01"),
+      "T4": (PREVIOUSMONTH(t), Dates["Month"] == "2024-03"),
+      "U1": (DATEADD(d, -1, MONTH), between((2024, 2, 29), (2024, 3, 1))),
+      "U2": (DATEADD(d, 1, QUARTER), between((2023, 11, 30), (2023, 11, 30))),
+  }
+  columns = {}
+  for name, (dates, context) in cases.items():
+      value = span(dates, t if name.startswith("T") else d)
+      columns[name] = value if context is None else CALCULATE(value, context)
+  result = model.evaluate(ROW(columns))
+dax: |
+  EVALUATE
+      ROW("A", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], -1, MONTH)), DATESBETWEEN(Dates[Date], DATE(2024, 2, 15), DATE(2024, 2, 29))), "B", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], 1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], 1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], 1, MONTH)), DATESBETWEEN(Dates[Date], DATE(2024, 2, 15), DATE(2024, 2, 29))), "C", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], -1, MONTH)), DATESBETWEEN(Dates[Date], DATE(2024, 2, 28), DATE(2024, 2, 29))), "D", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], 1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], 1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], 1, MONTH)), DATESBETWEEN(Dates[Date], DATE(2024, 1, 30), DATE(2024, 1, 31))), "E", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], 1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], 1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], 1, MONTH)), DATESBETWEEN(Dates[Date], DATE(2024, 1, 31), DATE(2024, 1, 31))), "F", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], -1, MONTH)), DATESBETWEEN(Dates[Date], DATE(2024, 4, 1), DATE(2024, 4, 30))), "G", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], -1, MONTH)), DATESBETWEEN(Dates[Date], DATE(2024, 4, 30), DATE(2024, 4, 30))), "H", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], -1, MONTH)), DATESBETWEEN(Dates[Date], DATE(2024, 4, 16), DATE(2024, 4, 30))), "I", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], -1, MONTH)), Dates[Date] IN {DATE(2024, 2, 10), DATE(2024, 2, 29)}), "J", CALCULATE(FORMAT(MINX(SAMEPERIODLASTYEAR(Dates[Date]), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(SAMEPERIODLASTYEAR(Dates[Date]), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(SAMEPERIODLASTYEAR(Dates[Date])), DATESBETWEEN(Dates[Date], DATE(2024, 2, 28), DATE(2024, 2, 29))), "K", CALCULATE(FORMAT(MINX(SAMEPERIODLASTYEAR(Dates[Date]), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(SAMEPERIODLASTYEAR(Dates[Date]), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(SAMEPERIODLASTYEAR(Dates[Date])), DATESBETWEEN(Dates[Date], DATE(2024, 2, 1), DATE(2024, 2, 28))), "L", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], 1, YEAR), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], 1, YEAR), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], 1, YEAR)), DATESBETWEEN(Dates[Date], DATE(2023, 2, 1), DATE(2023, 2, 28))), "M", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], 1, YEAR), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], 1, YEAR), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], 1, YEAR)), DATESBETWEEN(Dates[Date], DATE(2023, 2, 28), DATE(2023, 2, 28))), "N", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], 1, YEAR), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], 1, YEAR), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], 1, YEAR)), DATESBETWEEN(Dates[Date], DATE(2023, 2, 15), DATE(2023, 2, 28))), "O", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], 1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], 1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], 1, MONTH)), DATESBETWEEN(Dates[Date], DATE(2024, 1, 31), DATE(2024, 2, 2))), "P", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], -1, MONTH)), DATESBETWEEN(Dates[Date], DATE(2024, 3, 30), DATE(2024, 3, 31))), "Q", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], -1, MONTH)), Dates[Date] IN {DATE(2024, 3, 31), DATE(2024, 4, 30)}), "R", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], 2, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], 2, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], 2, MONTH)), DATESBETWEEN(Dates[Date], DATE(2023, 12, 31), DATE(2023, 12, 31))), "S1", FORMAT(MINX(DATESINPERIOD(Dates[Date], DATE(2024, 4, 30), -1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATESINPERIOD(Dates[Date], DATE(2024, 4, 30), -1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATESINPERIOD(Dates[Date], DATE(2024, 4, 30), -1, MONTH)), "S2", FORMAT(MINX(DATESINPERIOD(Dates[Date], DATE(2024, 2, 28), -1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATESINPERIOD(Dates[Date], DATE(2024, 2, 28), -1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATESINPERIOD(Dates[Date], DATE(2024, 2, 28), -1, MONTH)), "S3", FORMAT(MINX(DATESINPERIOD(Dates[Date], DATE(2024, 1, 31), 1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATESINPERIOD(Dates[Date], DATE(2024, 1, 31), 1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATESINPERIOD(Dates[Date], DATE(2024, 1, 31), 1, MONTH)), "S4", FORMAT(MINX(DATESINPERIOD(Dates[Date], DATE(2023, 2, 28), 1, YEAR), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATESINPERIOD(Dates[Date], DATE(2023, 2, 28), 1, YEAR), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATESINPERIOD(Dates[Date], DATE(2023, 2, 28), 1, YEAR)), "S5", FORMAT(MINX(DATESINPERIOD(Dates[Date], DATE(2024, 2, 29), -1, YEAR), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATESINPERIOD(Dates[Date], DATE(2024, 2, 29), -1, YEAR), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATESINPERIOD(Dates[Date], DATE(2024, 2, 29), -1, YEAR)), "T1", FORMAT(MINX(DATEADD(Txn[TxnDate], -1, YEAR), Txn[TxnDate]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Txn[TxnDate], -1, YEAR), Txn[TxnDate]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Txn[TxnDate], -1, YEAR)), "T2", CALCULATE(FORMAT(MINX(DATESYTD(Txn[TxnDate]), Txn[TxnDate]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATESYTD(Txn[TxnDate]), Txn[TxnDate]), "yyyy-mm-dd") & "#" & COUNTROWS(DATESYTD(Txn[TxnDate])), Dates[Month] = "2024-02"), "T3", CALCULATE(FORMAT(MINX(DATEADD(Txn[TxnDate], 1, MONTH), Txn[TxnDate]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Txn[TxnDate], 1, MONTH), Txn[TxnDate]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Txn[TxnDate], 1, MONTH)), Dates[Month] = "2024-01"), "T4", CALCULATE(FORMAT(MINX(PREVIOUSMONTH(Txn[TxnDate]), Txn[TxnDate]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(PREVIOUSMONTH(Txn[TxnDate]), Txn[TxnDate]), "yyyy-mm-dd") & "#" & COUNTROWS(PREVIOUSMONTH(Txn[TxnDate])), Dates[Month] = "2024-03"), "U1", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], -1, MONTH), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], -1, MONTH)), DATESBETWEEN(Dates[Date], DATE(2024, 2, 29), DATE(2024, 3, 1))), "U2", CALCULATE(FORMAT(MINX(DATEADD(Dates[Date], 1, QUARTER), Dates[Date]), "yyyy-mm-dd") & ".." & FORMAT(MAXX(DATEADD(Dates[Date], 1, QUARTER), Dates[Date]), "yyyy-mm-dd") & "#" & COUNTROWS(DATEADD(Dates[Date], 1, QUARTER)), DATESBETWEEN(Dates[Date], DATE(2023, 11, 30), DATE(2023, 11, 30))))
+expected:
+  ordered: false
+  columns:
+    '[A]': string
+    '[B]': string
+    '[C]': string
+    '[D]': string
+    '[E]': string
+    '[F]': string
+    '[G]': string
+    '[H]': string
+    '[I]': string
+    '[J]': string
+    '[K]': string
+    '[L]': string
+    '[M]': string
+    '[N]': string
+    '[O]': string
+    '[P]': string
+    '[Q]': string
+    '[R]': string
+    '[S1]': string
+    '[S2]': string
+    '[S3]': string
+    '[S4]': string
+    '[S5]': string
+    '[T1]': string
+    '[T2]': string
+    '[T3]': string
+    '[T4]': string
+    '[U1]': string
+    '[U2]': string
+  rows:
+  - [2024-01-15..2024-01-31#17, 2024-03-15..2024-03-31#17, 2024-01-28..2024-01-31#4,
+    2024-02-29..2024-02-29#1, 2024-02-29..2024-02-29#1, 2024-03-01..2024-03-31#31, 2024-03-30..2024-03-30#1,
+    2024-03-16..2024-03-31#16, 2024-01-10..2024-01-29#2, 2023-02-28..2023-02-28#1, 2023-02-01..2023-02-28#28,
+    2024-02-01..2024-02-29#29, 2024-02-28..2024-02-28#1, 2024-02-15..2024-02-29#15, 2024-02-29..2024-03-02#3,
+    2024-02-29..2024-02-29#1, 2024-02-29..2024-03-30#2, 2024-02-29..2024-02-29#1, 2024-04-01..2024-04-30#30,
+    2024-01-29..2024-02-28#31, 2024-01-31..2024-02-28#29, 2023-02-28..2024-02-28#366, 2023-03-01..2024-02-29#366,
+    2023-01-15..2023-12-31#6, 2024-01-01..2024-02-29#3, 2024-02-29..2024-02-29#1, 2024-02-29..2024-02-29#1,
+    2024-01-29..2024-02-01#4, 2024-02-29..2024-02-29#1]

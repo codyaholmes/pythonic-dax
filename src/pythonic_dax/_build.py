@@ -45,6 +45,9 @@ _TABLE_NAME_ONLY = {
     "VALUES", "ISFILTERED", "ISCROSSFILTERED",
 }  # fmt: skip
 
+# Functions whose third argument, when it is text, is the year end date.
+_YEAR_END_THIRD = {"TOTALYTD", "OPENINGBALANCEYEAR", "CLOSINGBALANCEYEAR"}
+
 _SAME_TABLE_COLUMNS = {"ALL", "ALLNOBLANKROW", "ALLSELECTED", "REMOVEFILTERS"}
 
 
@@ -72,6 +75,9 @@ def build(name: str, values: Sequence[Any]) -> Node:
 
     _validate(spec, args)
     _fill_blanks(spec, args)
+    if name in _YEAR_END_THIRD and len(args) == 4 and args[2] is OMITTED and args[3] is not OMITTED:
+        # DAX can't skip the filter; a text constant in its place is the year end date.
+        args = [args[0], args[1], args[3]]
 
     kind = {"S": "scalar", "T": "table", "M": "modifier"}[spec.returns]
     if name == "KEEPFILTERS" and getattr(args[0], "kind", None) == "table":

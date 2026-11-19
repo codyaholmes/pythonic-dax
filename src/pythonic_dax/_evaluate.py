@@ -5,9 +5,9 @@ aggregations, operators, IF/AND/OR/NOT, VAR, measure references (with context
 transition), RELATED, RELATEDTABLE, calculated columns, ROW, and the simple form of
 SUMMARIZECOLUMNS. Phase 4 adds CALCULATE, CALCULATETABLE, the filter modifiers and the
 functions that inspect the filter context. Phase 5 adds iterators, table and window
-functions (_iterators.py, _tables.py, _window.py), and Phase 6 the scalar function
-library (_library.py, _format.py). Everything else raises
-:class:`NotSupportedError` naming its phase.
+functions (_iterators.py, _tables.py, _window.py), Phase 6 the scalar function library
+(_library.py, _format.py), and Phase 7 time intelligence (_time.py). What the engine
+can't reproduce exactly raises :class:`NotSupportedError`.
 """
 
 from __future__ import annotations
@@ -796,9 +796,35 @@ class Evaluator:
 
         target = changes.keep if keep else changes.overwrite
         if getattr(arg, "kind", None) == "table":
-            target.extend(self.table_filters(self.table(arg, ctx)))
+            new = self.table_filters(self.table(arg, ctx))
         else:
-            target.append(self._boolean_filter(arg, ctx))
+            new = [self._boolean_filter(arg, ctx)]
+        target.extend(new)
+        if not keep:
+            for f in new:
+                if any(self._clears_table(c) for c in f.columns):
+                    changes.remove |= {id(c) for c in self.expanded_columns(f.table)}
+
+    def _clears_table(self, column: Column) -> bool:
+        """Whether a CALCULATE filter on this column also removes the filters on the
+        rest of its table, as ALL(<table>) does.
+
+        Power BI does this for the date column of a marked date table, and for a
+        Date/Time column that is the one side of a relationship, marked or not. It
+        doesn't for KEEPFILTERS filters.
+        """
+        if column.data_type is not DaxType.DATETIME:
+            return False
+        if column.table.date_column is column:
+            return True
+        sides = [r for r in self.model.relationships if r.to_column is column]
+        if any(r.is_active for r in sides):
+            return True
+        if sides:
+            raise NotSupportedError(
+                f"a filter on {column.ref}, the one side of only inactive relationships"
+            )
+        return False
 
     def _removal_columns(self, args: list[Any]) -> list[Column]:
         columns: list[Column] = []
@@ -1528,7 +1554,7 @@ EVALUATED = (
 
 
 def _register() -> None:
-    from . import _library, _window
+    from . import _library, _time, _window
     from ._iterators import SCALAR
     from ._tables import TABLES
 
@@ -1539,6 +1565,8 @@ def _register() -> None:
     _SCALAR_FUNCTIONS.update(_library.SCALAR)
     _TABLE_FUNCTIONS.update(_library.TABLES)
     LIBRARY_TYPES.update(_library.TYPES)
+    _SCALAR_FUNCTIONS.update(_time.SCALAR)
+    _TABLE_FUNCTIONS.update(_time.TABLES)
 
 
 _register()
