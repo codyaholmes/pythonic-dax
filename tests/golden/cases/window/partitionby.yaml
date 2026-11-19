@@ -1,0 +1,74 @@
+id: partitionby
+description: >-
+  PARTITIONBY restarts OFFSET, INDEX and ROWNUMBER for each customer. An empty blanks argument isn't allowed
+  in the middle of the list, so the DAX text writes DEFAULT.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  S = Sales
+  r = ALLSELECTED(S["CustomerKey"], S["SaleID"])
+  result = model.evaluate(SUMMARIZECOLUMNS(S["CustomerKey"], S["SaleID"], {
+      "Amount": SUM(S["Amount"]),
+      "Prev": CALCULATE(SUM(S["Amount"]), OFFSET(-1, r, ORDERBY(S["SaleID"]), partitionBy=PARTITIONBY(S["CustomerKey"]))),
+      "First": CALCULATE(SUM(S["Amount"]), INDEX(1, r, ORDERBY(S["SaleID"]), partitionBy=PARTITIONBY(S["CustomerKey"]))),
+      "RN": ROWNUMBER(r, ORDERBY(S["SaleID"], DESC), partitionBy=PARTITIONBY(S["CustomerKey"])),
+  }))
+dax: |
+  EVALUATE
+      SUMMARIZECOLUMNS(Sales[CustomerKey], Sales[SaleID], "Amount", SUM(Sales[Amount]), "Prev", CALCULATE(SUM(Sales[Amount]), OFFSET(-1, ALLSELECTED(Sales[CustomerKey], Sales[SaleID]), ORDERBY(Sales[SaleID]), DEFAULT, PARTITIONBY(Sales[CustomerKey]))), "First", CALCULATE(SUM(Sales[Amount]), INDEX(1, ALLSELECTED(Sales[CustomerKey], Sales[SaleID]), ORDERBY(Sales[SaleID]), DEFAULT, PARTITIONBY(Sales[CustomerKey]))), "RN", ROWNUMBER(ALLSELECTED(Sales[CustomerKey], Sales[SaleID]), ORDERBY(Sales[SaleID], DESC), DEFAULT, PARTITIONBY(Sales[CustomerKey])))
+expected:
+  ordered: false
+  columns:
+    Sales[CustomerKey]: integer
+    Sales[SaleID]: integer
+    '[Amount]': decimal
+    '[Prev]': decimal
+    '[First]': decimal
+    '[RN]': integer
+  rows:
+  - [1, 1, 10, null, 10, 2]
+  - [1, 3, 7.25, 10, 10, 1]
+  - [2, 2, 5.5, null, 5.5, 2]
+  - [2, 4, 100, 5.5, 5.5, 1]
+  - [3, 5, 1, null, 1, 1]

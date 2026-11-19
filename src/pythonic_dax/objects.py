@@ -250,7 +250,7 @@ class Table(_Metadata, TableExpr):
 
     # --- column access ------------------------------------------------------
 
-    def __getitem__(self, name: str) -> Column:
+    def __getitem__(self, name: str) -> Column:  # type: ignore[override]
         """Look up a column by name, ignoring case like DAX: ``Sales["Amount"]``."""
         try:
             return self._columns[name]

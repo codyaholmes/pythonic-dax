@@ -131,6 +131,50 @@ red = CALCULATE(total, Product["Color"] == "Red", KEEPFILTERS(Sales["Qty"] > 1))
   `LOOKUPVALUE`. A one-column table used as a value gives its single value.
 * **Checked against Power BI Desktop:** 15 golden cases in `tests/golden/cases/calculate`.
 
+**Phase 5 (iterators, table functions and window functions) is done.**
+
+```python
+from pythonic_dax import ALLSELECTED, OFFSET, ORDERBY, RANKX, ROLLUPADDISSUBTOTAL, SUMX, TREATAS
+
+margin = SUMX(Sales, Sales["Qty"] * Sales["Price"])
+rank = RANKX(ALLSELECTED(Product["Color"]), total)
+prev = CALCULATE(total, OFFSET(-1, ALLSELECTED(Date["Month"]), ORDERBY(Date["Month"])))
+
+# A matrix: rows per category and color, subtotals per category, and a grand total.
+model.evaluate(
+    SUMMARIZECOLUMNS(
+        ROLLUPADDISSUBTOTAL(
+            Product["Category"], "IsCategoryTotal", Product["Color"], "IsColorTotal"
+        ),
+        TREATAS(["Red", "Blue"], Product["Color"]),
+        {"Total": total, "Rank": rank},
+    )
+)
+```
+
+* **Iterators:** `SUMX`, `AVERAGEX`, `MINX`, `MAXX`, `COUNTX`, `COUNTAX`, `PRODUCTX`,
+  `CONCATENATEX`, `RANKX`, `EARLIER` and `EARLIEST`. A measure or `CALCULATE` inside an
+  iterator turns the row into a filter on the row's expanded table.
+* **Table functions:** `FILTER`, `ADDCOLUMNS`, `SELECTCOLUMNS`, `SUMMARIZE` (group-by
+  columns), `GROUPBY` with `CURRENTGROUP`, `TOPN`, `CROSSJOIN`, `GENERATE`,
+  `GENERATEALL`, `UNION`, `INTERSECT`, `EXCEPT`, `NATURALINNERJOIN`,
+  `NATURALLEFTOUTERJOIN`, `DATATABLE`, `GENERATESERIES`, table constructors and
+  `ALLSELECTED` as a table. Columns keep their lineage, so a renamed column still
+  filters its model column.
+* **SUMMARIZECOLUMNS:** filter tables, and subtotals with `ROLLUPADDISSUBTOTAL`. As in
+  Power BI, group-by values come from the filters on their own table only;
+  relationships don't narrow them.
+* **Window functions:** `OFFSET`, `INDEX`, `WINDOW`, `RANK` and `ROWNUMBER` with
+  `ORDERBY`, `PARTITIONBY` and BLANKS `DEFAULT`, `FIRST` or `LAST`. When several rows
+  are current (a total row), `OFFSET`, `INDEX` and `WINDOW` return the union of their
+  results and `RANK` and `ROWNUMBER` return BLANK.
+* **Refused rather than guessed:** an order Power BI would settle internally
+  (`CONCATENATEX` or `TOPN` without an order, window functions whose `ORDERBY` doesn't
+  identify each row), window functions without a relation, and `MATCHBY`.
+* **Checked against Power BI Desktop:** 30 golden cases in `tests/golden/cases`
+  (`iterators`, `tables`, `summarizecolumns` and `window`), including a matrix with
+  subtotals and a grand total that matches cell for cell.
+
 Anything else raises `NotSupportedError` naming the phase that brings it. The engine
 never guesses at an answer that might differ from Power BI.
 

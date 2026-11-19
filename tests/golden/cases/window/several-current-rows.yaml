@@ -1,0 +1,70 @@
+id: several-current-rows
+description: >-
+  With two customers in the filter, OFFSET(1) returns the row after each of them (Bob and Dee), WINDOW(0,
+  REL, 0, REL) returns both, and RANK is BLANK.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  total = model.add_measure("Total", SUM(Sales["Amount"]), table="Sales")
+  N = Customer["Name"]
+  result = model.evaluate(CALCULATETABLE(ROW(
+      "Next", CALCULATE(total, OFFSET(1, ALL(N), ORDERBY(N))),
+      "NextRows", COUNTROWS(OFFSET(1, ALL(N), ORDERBY(N))),
+      "Win", COUNTROWS(WINDOW(0, REL, 0, REL, ALL(N), ORDERBY(N))),
+      "Rank", RANK(SKIP, ALL(N), ORDERBY(N)),
+  ), N.IN(["Ann", "Cy"])))
+dax: |
+  DEFINE
+      MEASURE Sales[Total] = SUM(Sales[Amount])
+  EVALUATE
+      CALCULATETABLE(ROW("Next", CALCULATE([Total], OFFSET(1, ALL(Customer[Name]), ORDERBY(Customer[Name]))), "NextRows", COUNTROWS(OFFSET(1, ALL(Customer[Name]), ORDERBY(Customer[Name]))), "Win", COUNTROWS(WINDOW(0, REL, 0, REL, ALL(Customer[Name]), ORDERBY(Customer[Name]))), "Rank", RANK(SKIP, ALL(Customer[Name]), ORDERBY(Customer[Name]))), Customer[Name] IN {"Ann", "Cy"})
+expected:
+  ordered: false
+  columns:
+    '[Next]': decimal
+    '[NextRows]': integer
+    '[Win]': integer
+    '[Rank]': integer
+  rows:
+  - [105.5, 2, 2, null]

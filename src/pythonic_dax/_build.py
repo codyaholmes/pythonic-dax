@@ -15,6 +15,7 @@ from .expr import (
     OMITTED,
     Arg,
     Call,
+    GroupingCall,
     Keyword,
     Node,
     TableConstructor,
@@ -70,6 +71,7 @@ def build(name: str, values: Sequence[Any]) -> Node:
             args.append(check_arg(spec, param, value, len(args) + 1))
 
     _validate(spec, args)
+    _fill_blanks(spec, args)
 
     kind = {"S": "scalar", "T": "table", "M": "modifier"}[spec.returns]
     if name == "KEEPFILTERS" and getattr(args[0], "kind", None) == "table":
@@ -122,6 +124,10 @@ def check_arg(spec: Spec, param: Param, value: Any, position: int) -> Arg:
         return node
 
     node = coerce_any(value)
+    if isinstance(node, GroupingCall):
+        raise DaxError(
+            f"{node.name} can only be used among the group-by columns of SUMMARIZECOLUMNS."
+        )
     if kind == "F":
         if node.kind == "scalar":
             check_boolean_filter(name, node)
@@ -135,6 +141,17 @@ def check_arg(spec: Spec, param: Param, value: Any, position: int) -> Arg:
             f"CALCULATETABLE, not as the {param.name} of {name}."
         )
     return node
+
+
+def _fill_blanks(spec: Spec, args: list[Arg]) -> None:
+    """Window functions don't accept an empty ``blanks`` argument in the middle of the
+    list (Power BI requires it), so write the default, DEFAULT, there instead."""
+    names = [p.name for p in spec.params]
+    if "blanks" not in names or "partitionBy" not in names:
+        return
+    i = names.index("blanks")
+    if args[i] is OMITTED and any(a is not OMITTED for a in args[i + 1 :]):
+        args[i] = Keyword("DEFAULT")
 
 
 def row_context_columns(node: Node) -> list[Any]:

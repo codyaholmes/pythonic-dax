@@ -12,12 +12,13 @@ from typing import Any
 
 from ._build import check_arg
 from ._specs import Param, Spec
-from .errors import DaxError
+from .errors import DaxError, NotSupportedError
 from .expr import (
     OMITTED,
     Arg,
     Call,
     Expr,
+    GroupingCall,
     Keyword,
     Literal_,
     ModifierExpr,
@@ -43,6 +44,7 @@ __all__ = [
     "MAX",
     "MIN",
     "ORDERBY",
+    "ROLLUPADDISSUBTOTAL",
     "ROW",
     "SELECTCOLUMNS",
     "SUMMARIZE",
@@ -251,9 +253,11 @@ def SUMMARIZECOLUMNS(*args: Any) -> TableExpr:
     group: list[Arg] = []
     filters: list[Arg] = []
     i = 0
-    while i < len(args) and is_column(args[i]):
+    while i < len(args) and (is_column(args[i]) or isinstance(args[i], GroupingCall)):
         group.append(args[i])
         i += 1
+    if sum(isinstance(g, GroupingCall) for g in group) > 1:
+        raise NotSupportedError("SUMMARIZECOLUMNS with more than one ROLLUPADDISSUBTOTAL")
     while i < len(args) and isinstance(args[i], TableExpr | list):
         filters.append(coerce_table(args[i], "SUMMARIZECOLUMNS"))
         i += 1
@@ -270,6 +274,40 @@ def SUMMARIZECOLUMNS(*args: Any) -> TableExpr:
         if getattr(value, "kind", None) == "table":
             raise DaxError("SUMMARIZECOLUMNS: each expression must return a single value.")
     return TableCall("SUMMARIZECOLUMNS", [*group, *filters, *named])
+
+
+def ROLLUPADDISSUBTOTAL(*columns_and_names: Any) -> GroupingCall:
+    """DAX ``ROLLUPADDISSUBTOTAL(<groupBy_column>, <name>[, <groupBy_column>, <name>]...)``.
+
+    Used among the group-by columns of SUMMARIZECOLUMNS. It adds subtotal rows: one
+    for each level, rolling up the last column first, down to a grand total. Each
+    ``name`` becomes a True/False column that is TRUE on the rows where its column is
+    rolled up (its value is then BLANK)::
+
+        SUMMARIZECOLUMNS(
+            ROLLUPADDISSUBTOTAL(
+                Product["Category"], "IsCategoryTotal", Product["Color"], "IsColorTotal"
+            ),
+            {"Total": total},
+        )
+    """
+    if not columns_and_names or len(columns_and_names) % 2:
+        raise TypeError("ROLLUPADDISSUBTOTAL takes pairs of a group-by column and a name")
+    args: list[Arg] = []
+    names: set[str] = set()
+    for k in range(0, len(columns_and_names), 2):
+        column, name = columns_and_names[k], columns_and_names[k + 1]
+        if not is_column(column):
+            raise NotSupportedError(
+                "ROLLUPADDISSUBTOTAL with filters or ROLLUPGROUP (only columns and names)"
+            )
+        if not isinstance(name, str):
+            raise TypeError(f"ROLLUPADDISSUBTOTAL: names are text, got {name!r}")
+        if name.casefold() in names:
+            raise DaxError(f"ROLLUPADDISSUBTOTAL: the column name {name!r} is used more than once.")
+        names.add(name.casefold())
+        args += [column, Literal_(name)]
+    return GroupingCall("ROLLUPADDISSUBTOTAL", args)
 
 
 def TOPN(n_value: Any, table: Any, *order_by: Any) -> TableExpr:

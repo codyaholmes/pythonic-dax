@@ -1,0 +1,72 @@
+id: set-operations
+description: >-
+  UNION keeps duplicates; INTERSECT and EXCEPT compare whole rows, with BLANK equal to BLANK; CROSSJOIN,
+  GENERATESERIES and DISTINCT on a computed table. INTERSECT matches text without case.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  result = model.evaluate(ROW(
+      "Union", COUNTROWS(UNION(VALUES(Product["Color"]), VALUES(Customer["Name"]))),
+      "Intersect", COUNTROWS(INTERSECT(ALL(Sales["ProductKey"]), ALL(Product["ProductKey"]))),
+      "Except", COUNTROWS(EXCEPT(ALL(Product["ProductKey"]), ALL(Sales["ProductKey"]))),
+      "Cross", COUNTROWS(CROSSJOIN(Product, Customer)),
+      "Series", COUNTROWS(GENERATESERIES(1, 10, 3)),
+      "Distinct", COUNTROWS(DISTINCT(UNION([1, 2], [2, 3]))),
+      "CaseIntersect", COUNTROWS(INTERSECT(["red", "x"], VALUES(Product["Color"]))),
+  ))
+dax: |
+  EVALUATE
+      ROW("Union", COUNTROWS(UNION(VALUES(Product[Color]), VALUES(Customer[Name]))), "Intersect", COUNTROWS(INTERSECT(ALL(Sales[ProductKey]), ALL(Product[ProductKey]))), "Except", COUNTROWS(EXCEPT(ALL(Product[ProductKey]), ALL(Sales[ProductKey]))), "Cross", COUNTROWS(CROSSJOIN(Product, Customer)), "Series", COUNTROWS(GENERATESERIES(1, 10, 3)), "Distinct", COUNTROWS(DISTINCT(UNION({1, 2}, {2, 3}))), "CaseIntersect", COUNTROWS(INTERSECT({"red", "x"}, VALUES(Product[Color]))))
+expected:
+  ordered: false
+  columns:
+    '[Union]': integer
+    '[Intersect]': integer
+    '[Except]': integer
+    '[Cross]': integer
+    '[Series]': integer
+    '[Distinct]': integer
+    '[CaseIntersect]': integer
+  rows:
+  - [8, 3, 2, 16, 4, 3, 1]

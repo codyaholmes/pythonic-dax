@@ -1,0 +1,84 @@
+id: functions-with-total
+description: >-
+  OFFSET, RANK, ROWNUMBER, WINDOW and INDEX over ALLSELECTED customers, with a grand total. The current
+  row comes from the customer being grouped. On the total row every customer is current: OFFSET and WINDOW
+  return the union of their results (so the totals are the full 123.75), and RANK and ROWNUMBER are BLANK.
+  INDEX with only absolute positions doesn't need a current row. A BLANK total ranks lowest.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  total = model.add_measure("Total", SUM(Sales["Amount"]), table="Sales")
+  N = Customer["Name"]
+  result = model.evaluate(SUMMARIZECOLUMNS(ROLLUPADDISSUBTOTAL(N, "IsTotal"), {
+      "T": total,
+      "Prev": CALCULATE(total, OFFSET(-1, ALLSELECTED(N), ORDERBY(N))),
+      "Rank": RANK(DENSE, ALLSELECTED(N), ORDERBY(total, DESC)),
+      "RankAsc": RANK(SKIP, ALLSELECTED(N), ORDERBY(total, ASC)),
+      "RN": ROWNUMBER(ALLSELECTED(N), ORDERBY(N, DESC)),
+      "Running": CALCULATE(total, WINDOW(1, ABS, 0, REL, ALLSELECTED(N), ORDERBY(N))),
+      "Top": CONCATENATEX(INDEX(1, ALLSELECTED(N), ORDERBY(total, DESC)), N),
+  }))
+dax: |
+  DEFINE
+      MEASURE Sales[Total] = SUM(Sales[Amount])
+  EVALUATE
+      SUMMARIZECOLUMNS(ROLLUPADDISSUBTOTAL(Customer[Name], "IsTotal"), "T", [Total], "Prev", CALCULATE([Total], OFFSET(-1, ALLSELECTED(Customer[Name]), ORDERBY(Customer[Name]))), "Rank", RANK(DENSE, ALLSELECTED(Customer[Name]), ORDERBY([Total], DESC)), "RankAsc", RANK(SKIP, ALLSELECTED(Customer[Name]), ORDERBY([Total], ASC)), "RN", ROWNUMBER(ALLSELECTED(Customer[Name]), ORDERBY(Customer[Name], DESC)), "Running", CALCULATE([Total], WINDOW(1, ABS, 0, REL, ALLSELECTED(Customer[Name]), ORDERBY(Customer[Name]))), "Top", CONCATENATEX(INDEX(1, ALLSELECTED(Customer[Name]), ORDERBY([Total], DESC)), Customer[Name]))
+expected:
+  ordered: false
+  columns:
+    Customer[Name]: string
+    '[IsTotal]': boolean
+    '[T]': decimal
+    '[Prev]': decimal
+    '[Rank]': integer
+    '[RankAsc]': integer
+    '[RN]': integer
+    '[Running]': decimal
+    '[Top]': string
+  rows:
+  - [Ann, false, 17.25, null, 2, 3, 4, 17.25, Bob]
+  - [Bob, false, 105.5, 17.25, 1, 4, 3, 122.75, Bob]
+  - [Cy, false, 1, 105.5, 3, 2, 2, 123.75, Bob]
+  - [Dee, false, null, 1, 4, 1, 1, 123.75, Bob]
+  - [null, true, 123.75, 123.75, null, null, null, 123.75, Bob]

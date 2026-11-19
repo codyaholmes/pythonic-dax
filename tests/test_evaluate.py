@@ -74,9 +74,8 @@ def test_column_without_row_context_is_an_error(model: pdax.Model) -> None:
 
 
 def test_unbuilt_functions_raise_not_supported(model: pdax.Model) -> None:
-    sales = model.table("Sales")
-    with pytest.raises(pdax.NotSupportedError, match="Phase 5"):
-        value(model, pdax.SUMX(sales, sales["Amount"]))
+    with pytest.raises(pdax.NotSupportedError, match="Phase 6"):
+        value(model, pdax.ABS(-1))
 
 
 # --- variables --------------------------------------------------------------------------
