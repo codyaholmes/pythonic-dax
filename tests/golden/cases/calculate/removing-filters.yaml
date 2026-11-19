@@ -1,0 +1,90 @@
+id: removing-filters
+description: >-
+  ALL and REMOVEFILTERS remove filters. On a table they clear its expanded table, so REMOVEFILTERS(Sales)
+  and ALL(Sales) also clear the Product and Customer filters. ALLEXCEPT keeps the listed columns, even
+  from related tables. REMOVEFILTERS(Customer) keeps the filter that reaches Customer through the two-way
+  relationship.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  total = model.add_measure("Total", SUM(Sales["Amount"]), table="Sales")
+  C = Product["Color"]
+  result = model.evaluate(SUMMARIZECOLUMNS(C, {
+      "Total": total,
+      "AllColors": CALCULATE(total, ALL(C)),
+      "AllProduct": CALCULATE(total, ALL(Product)),
+      "RemoveAll": CALCULATE(total, REMOVEFILTERS()),
+      "RemoveSales": CALCULATE(total, REMOVEFILTERS(Sales)),
+      "AllExceptColor": CALCULATE(total, ALLEXCEPT(Sales, C)),
+      "AllExceptName": CALCULATE(total, ALLEXCEPT(Sales, Customer["Name"])),
+      "AllKey": CALCULATE(total, ALL(Product["ProductKey"])),
+      "Customers": COUNTROWS(Customer),
+      "CustomersAllSales": CALCULATE(COUNTROWS(Customer), ALL(Sales)),
+      "CustomersRemoveCustomer": CALCULATE(COUNTROWS(Customer), REMOVEFILTERS(Customer)),
+  }))
+dax: |
+  DEFINE
+      MEASURE Sales[Total] = SUM(Sales[Amount])
+  EVALUATE
+      SUMMARIZECOLUMNS(Product[Color], "Total", [Total], "AllColors", CALCULATE([Total], ALL(Product[Color])), "AllProduct", CALCULATE([Total], ALL(Product)), "RemoveAll", CALCULATE([Total], REMOVEFILTERS()), "RemoveSales", CALCULATE([Total], REMOVEFILTERS(Sales)), "AllExceptColor", CALCULATE([Total], ALLEXCEPT(Sales, Product[Color])), "AllExceptName", CALCULATE([Total], ALLEXCEPT(Sales, Customer[Name])), "AllKey", CALCULATE([Total], ALL(Product[ProductKey])), "Customers", COUNTROWS(Customer), "CustomersAllSales", CALCULATE(COUNTROWS(Customer), ALL(Sales)), "CustomersRemoveCustomer", CALCULATE(COUNTROWS(Customer), REMOVEFILTERS(Customer)))
+expected:
+  ordered: false
+  columns:
+    Product[Color]: string
+    '[Total]': decimal
+    '[AllColors]': decimal
+    '[AllProduct]': decimal
+    '[RemoveAll]': decimal
+    '[RemoveSales]': decimal
+    '[AllExceptColor]': decimal
+    '[AllExceptName]': decimal
+    '[AllKey]': decimal
+    '[Customers]': integer
+    '[CustomersAllSales]': integer
+    '[CustomersRemoveCustomer]': integer
+  rows:
+  - [null, 101, 123.75, 123.75, 123.75, 123.75, 101, 123.75, 101, 2, 4, 2]
+  - [Red, 15.5, 123.75, 123.75, 123.75, 123.75, 15.5, 123.75, 15.5, 2, 4, 2]
+  - [Green, 7.25, 123.75, 123.75, 123.75, 123.75, 7.25, 123.75, 7.25, 1, 4, 1]
+  - [Blue, null, 123.75, 123.75, 123.75, 123.75, null, 123.75, null, null, 4, null]

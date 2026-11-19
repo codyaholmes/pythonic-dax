@@ -1,0 +1,82 @@
+id: values-and-all-tables
+description: >-
+  VALUES includes the blank row when it is visible; DISTINCT never does. ALL counts the blank row; ALLNOBLANKROW
+  doesn't. A real BLANK color and the blank row's BLANK are one value.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  C = Product["Color"]
+  K = Product["ProductKey"]
+  result = model.evaluate(SUMMARIZECOLUMNS(C, {
+      "ValuesKey": COUNTROWS(VALUES(K)),
+      "DistinctKey": COUNTROWS(DISTINCT(K)),
+      "ValuesProduct": COUNTROWS(VALUES(Product)),
+      "AllColor": COUNTROWS(ALL(C)),
+      "AllKey": COUNTROWS(ALL(K)),
+      "AllNoBlankKey": COUNTROWS(ALLNOBLANKROW(K)),
+      "AllProduct": COUNTROWS(ALL(Product)),
+      "AllNoBlankProduct": COUNTROWS(ALLNOBLANKROW(Product)),
+      "Rows": COUNTROWS(Sales),
+  }))
+dax: |
+  EVALUATE
+      SUMMARIZECOLUMNS(Product[Color], "ValuesKey", COUNTROWS(VALUES(Product[ProductKey])), "DistinctKey", COUNTROWS(DISTINCT(Product[ProductKey])), "ValuesProduct", COUNTROWS(VALUES(Product)), "AllColor", COUNTROWS(ALL(Product[Color])), "AllKey", COUNTROWS(ALL(Product[ProductKey])), "AllNoBlankKey", COUNTROWS(ALLNOBLANKROW(Product[ProductKey])), "AllProduct", COUNTROWS(ALL(Product)), "AllNoBlankProduct", COUNTROWS(ALLNOBLANKROW(Product)), "Rows", COUNTROWS(Sales))
+expected:
+  ordered: false
+  columns:
+    Product[Color]: string
+    '[ValuesKey]': integer
+    '[DistinctKey]': integer
+    '[ValuesProduct]': integer
+    '[AllColor]': integer
+    '[AllKey]': integer
+    '[AllNoBlankKey]': integer
+    '[AllProduct]': integer
+    '[AllNoBlankProduct]': integer
+    '[Rows]': integer
+  rows:
+  - [null, 2, 1, 2, 4, 5, 4, 5, 4, 2]
+  - [Red, 1, 1, 1, 4, 5, 4, 5, 4, 2]
+  - [Green, 1, 1, 1, 4, 5, 4, 5, 4, 1]
+  - [Blue, 1, 1, 1, 4, 5, 4, 5, 4, null]

@@ -1,0 +1,78 @@
+id: context-transition
+description: >-
+  CALCULATE in calculated columns turns the row into a filter. In Product only the key is filtered; in
+  Sales (no key) every column is, so each sale sees only itself.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  total = model.add_measure("Total", SUM(Sales["Amount"]), table="Sales")
+  model.add_column(Product, "Own", CALCULATE(SUM(Sales["Amount"])))
+  model.add_column(Product, "AllProducts", CALCULATE(SUM(Sales["Amount"]), ALL(Product)))
+  model.add_column(Product, "Red", CALCULATE(total, Product["Color"] == "Red"))
+  model.add_column(Sales, "SameRows", CALCULATE(COUNTROWS(Sales)))
+  result = model.evaluate(SUMMARIZECOLUMNS(
+      Product["ProductKey"], Product["Own"], Product["AllProducts"], Product["Red"],
+      {"SameRows": SUM(Sales["SameRows"])},
+  ))
+dax: |
+  DEFINE
+      COLUMN Product[Own] = CALCULATE(SUM(Sales[Amount]))
+      COLUMN Product[AllProducts] = CALCULATE(SUM(Sales[Amount]), ALL(Product))
+      COLUMN Product[Red] = CALCULATE([Total], Product[Color] = "Red")
+      COLUMN Sales[SameRows] = CALCULATE(COUNTROWS(Sales))
+      MEASURE Sales[Total] = SUM(Sales[Amount])
+  EVALUATE
+      SUMMARIZECOLUMNS(Product[ProductKey], Product[Own], Product[AllProducts], Product[Red], "SameRows", SUM(Sales[SameRows]))
+expected:
+  ordered: false
+  columns:
+    Product[ProductKey]: integer
+    Product[Own]: decimal
+    Product[AllProducts]: decimal
+    Product[Red]: decimal
+    '[SameRows]': integer
+  rows:
+  - [null, null, null, null, 2]
+  - [1, 15.5, 123.75, 15.5, 2]
+  - [2, 7.25, 123.75, null, 1]

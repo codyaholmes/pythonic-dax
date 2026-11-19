@@ -1,0 +1,64 @@
+id: allnoblankrow-filter
+description: >-
+  ALLNOBLANKROW(Product) as a CALCULATE filter keeps every real product but not the blank row, so unmatched
+  sales disappear. On a column it keeps all values, and BLANK is one of them, so nothing is lost.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  result = model.evaluate(ROW(
+      "NoBlankRowFilter", CALCULATE(COUNTROWS(Sales), ALLNOBLANKROW(Product)),
+      "NoBlankRowColor", CALCULATE(COUNTROWS(Sales), ALLNOBLANKROW(Product["Color"])),
+      "TableAsValue", CALCULATE(VALUES(Product["Color"]), Product["ProductKey"] == 3),
+  ))
+dax: |
+  EVALUATE
+      ROW("NoBlankRowFilter", CALCULATE(COUNTROWS(Sales), ALLNOBLANKROW(Product)), "NoBlankRowColor", CALCULATE(COUNTROWS(Sales), ALLNOBLANKROW(Product[Color])), "TableAsValue", CALCULATE(VALUES(Product[Color]), Product[ProductKey] = 3))
+expected:
+  ordered: false
+  columns:
+    '[NoBlankRowFilter]': integer
+    '[NoBlankRowColor]': integer
+    '[TableAsValue]': string
+  rows:
+  - [3, 5, Blue]

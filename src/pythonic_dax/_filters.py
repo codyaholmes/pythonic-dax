@@ -13,6 +13,7 @@ hidden blank row, so they are visible exactly when that blank row is.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
@@ -27,44 +28,103 @@ if TYPE_CHECKING:
 
 
 class ColumnFilter:
-    """Allowed value combinations for some columns of one table."""
+    """Allowed value combinations for some columns of one table.
 
-    __slots__ = ("columns", "table", "values")
+    ``grouping`` marks the filters SUMMARIZECOLUMNS adds for its group-by columns,
+    which is what ISINSCOPE looks for.
+    """
 
-    def __init__(self, table: Table, columns: Sequence[Column], values: pl.DataFrame) -> None:
+    __slots__ = ("columns", "grouping", "table", "values")
+
+    def __init__(
+        self,
+        table: Table,
+        columns: Sequence[Column],
+        values: pl.DataFrame,
+        *,
+        grouping: bool = False,
+    ) -> None:
         self.table = table
         self.columns = tuple(columns)
         self.values = values  # one column per filter column, named like the column
+        self.grouping = grouping
+
+    def without(self, ids: set[int]) -> ColumnFilter | None:
+        """This filter with some columns taken out, or None if none are left."""
+        rest = [c for c in self.columns if id(c) not in ids]
+        if len(rest) == len(self.columns):
+            return self
+        if not rest:
+            return None
+        values = self.values.select([c.name for c in rest]).unique()
+        return ColumnFilter(self.table, rest, values, grouping=self.grouping)
 
     def __repr__(self) -> str:
         cols = ", ".join(c.ref for c in self.columns)
         return f"ColumnFilter({cols}: {self.values.height} values)"
 
 
+@dataclass(frozen=True)
+class RelationshipState:
+    """How a relationship behaves in a filter context (USERELATIONSHIP, CROSSFILTER)."""
+
+    active: bool
+    one_to_many: bool  # the one side filters the many side
+    many_to_one: bool  # the many side filters the one side
+
+
+def default_state(rel: Relationship) -> RelationshipState:
+    return RelationshipState(rel.is_active, True, rel.cross_filter is CrossFilter.BOTH)
+
+
 class FilterContext:
-    """An immutable set of column filters."""
+    """An immutable set of column filters, plus relationship changes made by
+    USERELATIONSHIP and CROSSFILTER."""
 
-    __slots__ = ("filters",)
+    __slots__ = ("filters", "overrides")
 
-    def __init__(self, filters: tuple[ColumnFilter, ...] = ()) -> None:
+    def __init__(
+        self,
+        filters: tuple[ColumnFilter, ...] = (),
+        overrides: tuple[tuple[Relationship, RelationshipState], ...] = (),
+    ) -> None:
         self.filters = filters
+        self.overrides = overrides
 
-    def apply(self, new: Iterable[ColumnFilter]) -> FilterContext:
-        """Add filters the way CALCULATE does: each one replaces existing filters on
-        its columns. A filter over several columns keeps its other columns."""
-        result = list(self.filters)
-        for f in new:
-            ids = {id(c) for c in f.columns}
-            kept: list[ColumnFilter] = []
-            for g in result:
-                rest = [c for c in g.columns if id(c) not in ids]
-                if len(rest) == len(g.columns):
-                    kept.append(g)
-                elif rest:
-                    values = g.values.select([c.name for c in rest]).unique()
-                    kept.append(ColumnFilter(g.table, rest, values))
-            result = [*kept, f]
-        return FilterContext(tuple(result))
+    def apply(
+        self, new: Iterable[ColumnFilter], keep: Iterable[ColumnFilter] = ()
+    ) -> FilterContext:
+        """Add filters the way CALCULATE does.
+
+        Each filter in ``new`` replaces existing filters on its columns (a filter over
+        several columns keeps its other columns). Filters in ``keep`` (KEEPFILTERS)
+        are added without replacing anything. New filters never replace each other.
+        """
+        new = list(new)
+        ids = {id(c) for f in new for c in f.columns}
+        return FilterContext((*self.remove(ids).filters, *new, *keep), self.overrides)
+
+    def remove(self, ids: set[int]) -> FilterContext:
+        """Take the columns with these ids out of every filter."""
+        kept = [g for f in self.filters if (g := f.without(ids)) is not None]
+        return FilterContext(tuple(kept), self.overrides)
+
+    def cleared(self) -> FilterContext:
+        """No filters at all (``ALL()``), keeping relationship changes."""
+        return FilterContext((), self.overrides)
+
+    def state(self, rel: Relationship) -> RelationshipState:
+        for r, state in reversed(self.overrides):
+            if r is rel:
+                return state
+        return default_state(rel)
+
+    def override(self, rel: Relationship, state: RelationshipState) -> FilterContext:
+        return FilterContext(self.filters, (*self.overrides, (rel, state)))
+
+    def direct(self, column: Column) -> list[ColumnFilter]:
+        """The filters that name this column."""
+        return [f for f in self.filters if any(c is column for c in f.columns)]
 
     def __repr__(self) -> str:
         return f"FilterContext({list(self.filters)})"
@@ -174,15 +234,16 @@ class Storage:
                 m = self._filter_mask(f)
                 mask = m if mask is None else mask & m
         for rel in self.model.relationships:
-            if not rel.is_active or rel is via:
+            state = filters.state(rel)
+            if not state.active or rel is via:
                 continue
             if rel.cardinality is Cardinality.MANY_TO_MANY:
                 raise NotSupportedError("many-to-many relationships")
             if rel.from_table is rel.to_table:
                 raise NotSupportedError("a relationship from a table to itself")
-            if rel.from_table is table:
+            if rel.from_table is table and state.one_to_many:
                 other = rel.to_table
-            elif rel.to_table is table and rel.cross_filter is CrossFilter.BOTH:
+            elif rel.to_table is table and state.many_to_one:
                 other = rel.from_table
             else:
                 continue
@@ -193,6 +254,14 @@ class Storage:
                 continue
             restriction = self._restrict(table, rel, other_mask)
             mask = restriction if mask is None else mask & restriction
+        return mask
+
+    def direct_mask(self, column: Column, filters: FilterContext) -> pl.Series | None:
+        """Rows allowed by the filters that name ``column`` (ignoring all others)."""
+        mask: pl.Series | None = None
+        for f in filters.direct(column):
+            m = self._filter_mask(f)
+            mask = m if mask is None else mask & m
         return mask
 
     def _filter_mask(self, f: ColumnFilter) -> pl.Series:
@@ -261,3 +330,9 @@ class Storage:
         names = [c.name for c in columns]
         values = self.ext(table).select(names).slice(index, 1)
         return ColumnFilter(table, columns, values)
+
+    def present_columns(self, table: Table) -> list[Column]:
+        """The table's columns that have values (a calculated column being computed
+        doesn't yet)."""
+        names = set(self.ext(table).columns)
+        return [c for c in table.columns if c.name in names]

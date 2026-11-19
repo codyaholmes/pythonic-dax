@@ -1,0 +1,85 @@
+id: inspection-without-filters
+description: >-
+  The same functions with no grouping, and inside CALCULATE. A one-row table used as a value gives that
+  value; an empty one gives BLANK. A filter on Customer doesn't cross-filter Product (Sales doesn't filter
+  Product).
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  C = Product["Color"]
+  K = Product["ProductKey"]
+  result = model.evaluate(ROW(
+      "HasOne", HASONEVALUE(C), "Selected", SELECTEDVALUE(C, "many"),
+      "FilteredColor", ISFILTERED(C), "CrossKey", ISCROSSFILTERED(K),
+      "InScope", ISINSCOPE(C), "OneFilter", HASONEFILTER(C),
+      "FilterCount", COUNTROWS(FILTERS(C)), "KeyFilterCount", COUNTROWS(FILTERS(K)),
+      "RedOneFilter", CALCULATE(HASONEFILTER(C), C == "Red"),
+      "RedFilterKeys", CALCULATE(COUNTROWS(FILTERS(K)), C == "Red"),
+      "RedSelected", CALCULATE(SELECTEDVALUE(C), K == 1),
+      "OneColor", CALCULATE(VALUES(C), K == 1),
+      "NoColor", CALCULATE(VALUES(C), K == 99),
+      "CrossByCustomer", CALCULATE(ISCROSSFILTERED(Product), Customer["Name"] == "Ann"),
+  ))
+dax: |
+  EVALUATE
+      ROW("HasOne", HASONEVALUE(Product[Color]), "Selected", SELECTEDVALUE(Product[Color], "many"), "FilteredColor", ISFILTERED(Product[Color]), "CrossKey", ISCROSSFILTERED(Product[ProductKey]), "InScope", ISINSCOPE(Product[Color]), "OneFilter", HASONEFILTER(Product[Color]), "FilterCount", COUNTROWS(FILTERS(Product[Color])), "KeyFilterCount", COUNTROWS(FILTERS(Product[ProductKey])), "RedOneFilter", CALCULATE(HASONEFILTER(Product[Color]), Product[Color] = "Red"), "RedFilterKeys", CALCULATE(COUNTROWS(FILTERS(Product[ProductKey])), Product[Color] = "Red"), "RedSelected", CALCULATE(SELECTEDVALUE(Product[Color]), Product[ProductKey] = 1), "OneColor", CALCULATE(VALUES(Product[Color]), Product[ProductKey] = 1), "NoColor", CALCULATE(VALUES(Product[Color]), Product[ProductKey] = 99), "CrossByCustomer", CALCULATE(ISCROSSFILTERED(Product), Customer[Name] = "Ann"))
+expected:
+  ordered: false
+  columns:
+    '[HasOne]': boolean
+    '[Selected]': string
+    '[FilteredColor]': boolean
+    '[CrossKey]': boolean
+    '[InScope]': boolean
+    '[OneFilter]': boolean
+    '[FilterCount]': integer
+    '[KeyFilterCount]': integer
+    '[RedOneFilter]': boolean
+    '[RedFilterKeys]': integer
+    '[RedSelected]': string
+    '[OneColor]': string
+    '[NoColor]': string
+    '[CrossByCustomer]': boolean
+  rows:
+  - [false, many, false, false, false, false, 4, 5, true, 5, Red, Red, null, false]

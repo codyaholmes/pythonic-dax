@@ -1,0 +1,105 @@
+id: inspection-functions
+description: >-
+  HASONEVALUE, SELECTEDVALUE, ISFILTERED, ISCROSSFILTERED, ISINSCOPE, HASONEFILTER and FILTERS while grouping
+  by color. ISFILTERED(Sales) is FALSE because filters on Product aren't on Sales itself. ISINSCOPE stays
+  TRUE when another column's filter is removed but not when the color filter is replaced. FILTERS of an
+  unfiltered column returns all its values plus the blank row.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Product:
+      columns:
+        ProductKey: integer
+        Color: string
+      rows:
+      - [1, Red]
+      - [2, Green]
+      - [3, Blue]
+      - [4, null]
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+      - [3, Cy]
+      - [4, Dee]
+    Sales:
+      columns:
+        SaleID: integer
+        ProductKey: integer
+        CustomerKey: integer
+        Amount: decimal
+        Qty: integer
+        Note: string
+      rows:
+      - [1, 1, 1, 10.0, 1, a]
+      - [2, 1, 2, 5.5, 2, x]
+      - [3, 2, 1, 7.25, null, null]
+      - [4, 9, 2, 100.0, 4, b]
+      - [5, null, 3, 1.0, 1, c]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+  - from: Sales[CustomerKey]
+    to: Customer[CustomerKey]
+    cross_filter: both
+python: |
+  C = Product["Color"]
+  K = Product["ProductKey"]
+  checks = {
+      "HasOne": HASONEVALUE(C),
+      "Selected": SELECTEDVALUE(C, "many"),
+      "SelectedKey": SELECTEDVALUE(K),
+      "FilteredColor": ISFILTERED(C),
+      "FilteredKey": ISFILTERED(K),
+      "FilteredProduct": ISFILTERED(Product),
+      "FilteredSales": ISFILTERED(Sales),
+      "CrossKey": ISCROSSFILTERED(K),
+      "CrossSales": ISCROSSFILTERED(Sales),
+      "CrossCustomer": ISCROSSFILTERED(Customer["Name"]),
+      "InScope": ISINSCOPE(C),
+      "KeyInScope": ISINSCOPE(K),
+      "ScopeAfterFilter": CALCULATE(ISINSCOPE(C), C == "Red"),
+      "ScopeAfterRemove": CALCULATE(ISINSCOPE(C), REMOVEFILTERS(K)),
+      "OneFilter": HASONEFILTER(C),
+      "FilterCount": COUNTROWS(FILTERS(C)),
+      "KeyFilterCount": COUNTROWS(FILTERS(K)),
+  }
+  result = model.evaluate(SUMMARIZECOLUMNS(C, checks))
+dax: |
+  EVALUATE
+      SUMMARIZECOLUMNS(Product[Color], "HasOne", HASONEVALUE(Product[Color]), "Selected", SELECTEDVALUE(Product[Color], "many"), "SelectedKey", SELECTEDVALUE(Product[ProductKey]), "FilteredColor", ISFILTERED(Product[Color]), "FilteredKey", ISFILTERED(Product[ProductKey]), "FilteredProduct", ISFILTERED(Product), "FilteredSales", ISFILTERED(Sales), "CrossKey", ISCROSSFILTERED(Product[ProductKey]), "CrossSales", ISCROSSFILTERED(Sales), "CrossCustomer", ISCROSSFILTERED(Customer[Name]), "InScope", ISINSCOPE(Product[Color]), "KeyInScope", ISINSCOPE(Product[ProductKey]), "ScopeAfterFilter", CALCULATE(ISINSCOPE(Product[Color]), Product[Color] = "Red"), "ScopeAfterRemove", CALCULATE(ISINSCOPE(Product[Color]), REMOVEFILTERS(Product[ProductKey])), "OneFilter", HASONEFILTER(Product[Color]), "FilterCount", COUNTROWS(FILTERS(Product[Color])), "KeyFilterCount", COUNTROWS(FILTERS(Product[ProductKey])))
+expected:
+  ordered: false
+  columns:
+    Product[Color]: string
+    '[HasOne]': boolean
+    '[Selected]': string
+    '[SelectedKey]': integer
+    '[FilteredColor]': boolean
+    '[FilteredKey]': boolean
+    '[FilteredProduct]': boolean
+    '[FilteredSales]': boolean
+    '[CrossKey]': boolean
+    '[CrossSales]': boolean
+    '[CrossCustomer]': boolean
+    '[InScope]': boolean
+    '[KeyInScope]': boolean
+    '[ScopeAfterFilter]': boolean
+    '[ScopeAfterRemove]': boolean
+    '[OneFilter]': boolean
+    '[FilterCount]': integer
+    '[KeyFilterCount]': integer
+  rows:
+  - [null, true, null, null, true, false, true, false, true, true, true, true, false,
+    false, true, true, 1, 5]
+  - [Red, true, Red, 1, true, false, true, false, true, true, true, true, false,
+    false, true, true, 1, 5]
+  - [Green, true, Green, 2, true, false, true, false, true, true, true, true, false,
+    false, true, true, 1, 5]
+  - [Blue, true, Blue, 3, true, false, true, false, true, true, true, true, false,
+    false, true, true, 1, 5]

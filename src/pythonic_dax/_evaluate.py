@@ -1,9 +1,11 @@
 """The formula engine: evaluates expression trees in filter context and row context.
 
-Phase 3 covers the evaluation core: filters flowing across relationships, the basic
+Phase 3 built the evaluation core: filters flowing across relationships, the basic
 aggregations, operators, IF/AND/OR/NOT, VAR, measure references (with context
 transition), RELATED, RELATEDTABLE, calculated columns, ROW, and the simple form of
-SUMMARIZECOLUMNS. Everything else raises :class:`NotSupportedError` naming its phase.
+SUMMARIZECOLUMNS. Phase 4 adds CALCULATE, CALCULATETABLE, the filter modifiers and the
+functions that inspect the filter context. Everything else raises
+:class:`NotSupportedError` naming its phase.
 """
 
 from __future__ import annotations
@@ -18,13 +20,15 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 
 from . import _scalar as sc
+from ._build import row_context_columns
 from ._coverage import PLANNED
-from ._filters import ColumnFilter, FilterContext, Storage
+from ._filters import ColumnFilter, FilterContext, RelationshipState, Storage, normalized
 from .errors import DaxError, NotSupportedError
 from .expr import (
     BinaryOp,
     Call,
     Literal_,
+    ModifierCall,
     Node,
     TableCall,
     TableConstructor,
@@ -96,6 +100,13 @@ def infer_type(node: Any) -> StaticType:
             return infer_type(args[0])
         if name == "AVERAGE":
             return DaxType.DECIMAL
+        if name == "CALCULATE":
+            return infer_type(args[0])
+        if name in ("SELECTEDVALUE", "LOOKUPVALUE"):
+            alternate = _alternate(name, args)
+            return unify(
+                [infer_type(args[0]), BLANK_TYPE if alternate is None else infer_type(alternate)]
+            )
         if name in ("MIN", "MAX"):
             return unify([infer_type(args[0]), infer_type(args[1])])
         if name == "IF":
@@ -107,7 +118,22 @@ def infer_type(node: Any) -> StaticType:
                 ]
             )
         return node.dax_type
+    if (
+        isinstance(node, TableCall)
+        and node.name in ("VALUES", "DISTINCT")
+        and is_column(node.args[0])
+    ):
+        return node.args[0].data_type  # type: ignore[union-attr,no-any-return]
     return getattr(node, "dax_type", None)
+
+
+def _alternate(name: str, args: list[Any]) -> Any:
+    """The alternate result of SELECTEDVALUE or LOOKUPVALUE, or None."""
+    if name == "SELECTEDVALUE":
+        value = args[1] if len(args) > 1 else None
+    else:  # LOOKUPVALUE: result column, then search pairs, then an optional alternate
+        value = args[-1] if len(args) % 2 == 0 else None
+    return None if value is None or isinstance(value, _Omitted) else value
 
 
 def arithmetic_type(op: str, a: StaticType, b: StaticType) -> StaticType:
@@ -179,10 +205,15 @@ def convert(value: Value, dax_type: StaticType) -> Value:
 
 @dataclass(frozen=True)
 class RowRef:
-    """A row context: one row of a table (an index into ``Storage.ext``)."""
+    """A row context: one row of a table (an index into ``Storage.ext``).
+
+    ``columns`` limits the row to some columns, as when a True/False filter iterates
+    the values of ``ALL(<columns>)``. Context transition then filters only those.
+    """
 
     table: Table
     index: int
+    columns: tuple[Column, ...] | None = None
 
 
 class _Lazy:
@@ -207,28 +238,39 @@ class Context:
     filters: FilterContext = field(default_factory=FilterContext)
     rows: tuple[RowRef, ...] = ()
     env: dict[int, _Lazy] = field(default_factory=dict)
+    shadow: FilterContext | None = None  # what ALLSELECTED restores
 
 
 @dataclass
 class RowSet:
-    """The visible rows of a model table."""
+    """The visible rows of a model table.
+
+    ``blank`` says whether the hidden blank row counts as one of the rows when it is
+    visible: it does for VALUES(<table>) and ALL(<table>), not for a table reference.
+    """
 
     table: Table
     mask: pl.Series | None
+    blank: bool = False
 
 
 @dataclass
 class ResultColumn:
     name: str
     dax_type: StaticType
+    column: Column | None = None  # the model column the values come from (lineage)
 
 
 @dataclass
 class Frame:
-    """A table computed by the engine, such as the result of SUMMARIZECOLUMNS."""
+    """A table computed by the engine, such as the result of SUMMARIZECOLUMNS.
+
+    ``filterable`` is False for tables whose use as a CALCULATE filter isn't verified.
+    """
 
     columns: list[ResultColumn]
     rows: list[list[Value]]
+    filterable: bool = True
 
     def to_polars(self) -> pl.DataFrame:
         series = []
@@ -287,13 +329,23 @@ class Evaluator:
         if isinstance(value, Frame):
             return value
         table = value.table
-        real = self.storage.real_rows(table)
-        rows = self.storage.ext(table).filter(real if value.mask is None else value.mask & real)
-        for col in table.columns:
+        rows = self.storage.ext(table).filter(self._rowset_mask(value))
+        present = self.storage.present_columns(table)
+        for col in present:
             self.storage.check_text(col)
-        columns = [ResultColumn(f"{table.name}[{c.name}]", c.data_type) for c in table.columns]
-        names = [c.name for c in table.columns]
+        columns = [ResultColumn(f"{table.name}[{c.name}]", c.data_type, c) for c in present]
+        names = [c.name for c in present]
         return Frame(columns, [list(r) for r in rows.select(names).rows()])
+
+    def _rowset_mask(self, value: RowSet) -> pl.Series:
+        """The rows of a RowSet, with the blank row only when the RowSet includes it."""
+        mask = value.mask
+        if not value.blank:
+            real = self.storage.real_rows(value.table)
+            return real if mask is None else mask & real
+        if mask is None:
+            return pl.Series([True] * self.storage.ext(value.table).height, dtype=pl.Boolean)
+        return mask
 
     # --- scalars -------------------------------------------------------------------------
 
@@ -321,12 +373,14 @@ class Evaluator:
         if isinstance(node, Call):
             return self._call(node, ctx)
         if getattr(node, "kind", None) == "table":
-            raise NotSupportedError("using a table as a single value", phase=5)
+            return self._table_as_value(self.table(node, ctx))
         raise TypeError(f"can't evaluate {node!r} as a value")
 
     def _column_value(self, column: Column, ctx: Context) -> Value:
         for row in reversed(ctx.rows):
             if row.table is column.table:
+                if row.columns is not None and not any(c is column for c in row.columns):
+                    break
                 self.storage.check_text(column)
                 return self.storage.ext(column.table)[column.name][row.index]
         raise DaxError(
@@ -407,21 +461,18 @@ class Evaluator:
     def _transition(self, ctx: Context, *, keep_env: bool) -> Context:
         """Context transition: each row context becomes a filter on its row's values."""
         filters = ctx.filters
-        if ctx.rows:
-            new: list[ColumnFilter] = []
-            for row in ctx.rows:
-                new.append(self._row_filter(row))
-            filters = filters.apply(new)
-        return Context(filters=filters, env=ctx.env if keep_env else {})
+        for row in ctx.rows:  # an inner row context replaces an outer one's filters
+            filters = filters.apply([self._row_filter(row)])
+        return Context(filters=filters, env=ctx.env if keep_env else {}, shadow=ctx.shadow)
 
     def _row_filter(self, row: RowRef) -> ColumnFilter:
         table = row.table
-        present = set(self.storage.ext(table).columns)
-        key = self.model.row_identifier(table)
-        if key is not None:
+        if row.columns is not None:
+            columns = list(row.columns)
+        elif (key := self.model.row_identifier(table)) is not None:
             columns = [key]
         else:
-            columns = [c for c in table.columns if c.name in present and c is not self.computing]
+            columns = [c for c in self.storage.present_columns(table) if c is not self.computing]
         return self.storage.row_filter(table, row.index, columns)
 
     # --- tables --------------------------------------------------------------------------
@@ -443,11 +494,28 @@ class Evaluator:
                 return self._summarizecolumns(node.args, ctx)
             if node.name == "RELATEDTABLE":
                 return self._relatedtable(node.args, ctx)
+            handler = _TABLE_FUNCTIONS.get(node.name)
+            if handler is not None:
+                return handler(self, node.args, ctx)
             raise NotSupportedError(node.name, PLANNED.get(node.name))
+        if isinstance(node, ModifierCall):
+            raise DaxError(
+                f"{node.to_dax()} can only be used as a filter argument of CALCULATE or "
+                "CALCULATETABLE."
+            )
         if isinstance(node, TableConstructor):
-            raise NotSupportedError("table constructors outside IN", phase=5)
+            return self._table_constructor(node, ctx)
         name = getattr(node, "name", type(node).__name__)
         raise NotSupportedError(str(name), PLANNED.get(str(name)))
+
+    def _table_constructor(self, node: TableConstructor, ctx: Context) -> Frame:
+        """``{1, 2}`` or ``{(1, "a"), (2, "b")}``: columns named Value, or Value1, Value2..."""
+        width = len(node.rows[0]) if node.rows else 1
+        names = ["[Value]"] if width == 1 else [f"[Value{i + 1}]" for i in range(width)]
+        types = [unify([infer_type(row[i]) for row in node.rows]) for i in range(width)]
+        rows = [[self.scalar(v, ctx) for v in row] for row in node.rows]
+        rows = [[convert(v, t) for v, t in zip(row, types, strict=True)] for row in rows]
+        return Frame([ResultColumn(n, t) for n, t in zip(names, types, strict=True)], rows)
 
     def _row(self, args: list[Any], ctx: Context) -> Frame:
         columns: list[ResultColumn] = []
@@ -481,6 +549,7 @@ class Evaluator:
         for col in group:
             self.storage.check_text(col)
             tables.setdefault(id(col.table), []).append(col)
+        shadow = ctx.filters  # ALLSELECTED inside restores the filters from outside
         combos = pl.DataFrame()
         for cols in tables.values():
             table = cols[0].table
@@ -492,7 +561,7 @@ class Evaluator:
             values = values.rename({c.name: f"{id(c)}" for c in cols})
             combos = values if combos.width == 0 else combos.join(values, how="cross")
 
-        columns = [ResultColumn(f"{c.table.name}[{c.name}]", c.data_type) for c in group]
+        columns = [ResultColumn(f"{c.table.name}[{c.name}]", c.data_type, c) for c in group]
         columns += [ResultColumn(f"[{name}]", infer_type(expr)) for name, expr in named]
         rows: list[list[Value]] = []
         combo_rows = combos.rows() if combos.width else [()]
@@ -508,15 +577,281 @@ class Evaluator:
                             for c in cols
                         ]
                     ),
+                    grouping=True,
                 )
                 for cols in tables.values()
             ]
-            inner = Context(filters=ctx.filters.apply(filters), env=ctx.env)
+            inner = Context(filters=ctx.filters.apply(filters), env=ctx.env, shadow=shadow)
             results = [self.scalar(expr, inner) for _, expr in named]
             if all(r is None for r in results):
                 continue
             rows.append([*combo, *results])
         return Frame(columns, rows)
+
+    # --- CALCULATE -------------------------------------------------------------------
+
+    def calculate_context(self, filter_args: Sequence[Any], ctx: Context) -> Context:
+        """The context CALCULATE evaluates its expression in.
+
+        The steps follow Power BI: filter arguments are evaluated in the original
+        context; then context transition turns row contexts into filters; then the
+        modifiers (USERELATIONSHIP, CROSSFILTER, then ALL and friends) change the
+        result; last, the filter arguments are applied. Row contexts end here.
+        """
+        changes = _Changes()
+        for arg in filter_args:
+            self._filter_argument(arg, ctx, changes, keep=False)
+
+        filters = self._transition(ctx, keep_env=True).filters
+        for rel in changes.use:
+            filters = self._use_relationship(filters, rel)
+        for rel, direction in changes.cross:
+            filters = self._cross_filter(filters, rel, direction)
+        if changes.remove_all:
+            filters = filters.cleared()
+        if changes.remove:
+            filters = filters.remove(changes.remove)
+        if changes.restore_all or changes.restore:
+            filters = self._restore(filters, changes, ctx)
+        filters = filters.apply(changes.overwrite, changes.keep)
+        return Context(filters=filters, env=ctx.env, shadow=ctx.shadow)
+
+    def _filter_argument(self, arg: Any, ctx: Context, changes: _Changes, *, keep: bool) -> None:
+        name = getattr(arg, "name", None) if isinstance(arg, TableCall | ModifierCall) else None
+        args = getattr(arg, "args", [])
+        if name == "KEEPFILTERS":
+            if keep:
+                raise NotSupportedError("KEEPFILTERS inside KEEPFILTERS")
+            inner = args[0]
+            inner_name = getattr(inner, "name", None)
+            if isinstance(inner, TableCall | ModifierCall) and inner_name in _REMOVERS:
+                raise NotSupportedError(f"KEEPFILTERS({inner_name}(...))")
+            self._filter_argument(inner, ctx, changes, keep=True)
+            return
+        if name in ("ALL", "REMOVEFILTERS"):
+            if not args:
+                changes.remove_all = True
+            else:
+                changes.remove |= {id(c) for c in self._removal_columns(args)}
+            return
+        if name == "ALLEXCEPT":
+            kept = {id(c) for c in args[1:]}
+            changes.remove |= {id(c) for c in self.expanded_columns(args[0]) if id(c) not in kept}
+            return
+        if name == "ALLSELECTED":
+            if ctx.shadow is None:
+                raise NotSupportedError("ALLSELECTED outside an iteration such as SUMMARIZECOLUMNS")
+            if not args:
+                changes.restore_all = True
+            else:
+                changes.restore.extend(self._removal_columns(args))
+            return
+        if name == "ALLNOBLANKROW" and not is_column(args[0]) and self._expansion_steps(args[0]):
+            # Verified as a plain filter (all rows but the blank one) only for tables
+            # that don't expand to other tables.
+            raise NotSupportedError("ALLNOBLANKROW of a table on the many side as a filter")
+        if name == "USERELATIONSHIP":
+            changes.use.append(self._relationship(args[0], args[1]))
+            return
+        if name == "CROSSFILTER":
+            rel = self._relationship(args[0], args[1])
+            changes.cross.append((rel, (args[0], args[2].name)))
+            return
+
+        target = changes.keep if keep else changes.overwrite
+        if getattr(arg, "kind", None) == "table":
+            target.extend(self.table_filters(self.table(arg, ctx)))
+        else:
+            target.append(self._boolean_filter(arg, ctx))
+
+    def _removal_columns(self, args: list[Any]) -> list[Column]:
+        columns: list[Column] = []
+        for a in args:
+            columns.extend([a] if is_column(a) else self.expanded_columns(a))
+        return columns
+
+    def _boolean_filter(self, node: Any, ctx: Context) -> ColumnFilter:
+        """A True/False filter: ``FILTER(ALL(<its columns>), <condition>)``."""
+        columns: list[Column] = []
+        for c in row_context_columns(node):
+            if not any(c is d for d in columns):
+                columns.append(c)
+        table = columns[0].table
+        for c in columns:
+            self.storage.check_text(c)
+        names = [c.name for c in columns]
+        combos = (
+            self.storage.ext(table)
+            .select(names)
+            .with_row_index("__i")
+            .unique(subset=names, keep="first", maintain_order=True)
+        )
+        hits = _vector_condition(node, combos, columns)
+        if hits is None:
+            keep = []
+            for index in combos["__i"].to_list():
+                row = RowRef(table, index, tuple(columns))
+                inner = replace(ctx, rows=(*ctx.rows, row))
+                keep.append(sc.to_bool(self.scalar(node, inner)))
+            hits = pl.Series(keep, dtype=pl.Boolean)
+        values = combos.filter(hits).select(names)
+        return ColumnFilter(table, columns, values)
+
+    def table_filters(self, value: TableValue) -> list[ColumnFilter]:
+        """The filters a table applies when it is a CALCULATE filter argument.
+
+        The rows of a model table filter its expanded table: the table itself and,
+        following relationships towards their one side, the related rows of each
+        table it reaches (the blank row for keys with no match).
+        """
+        if isinstance(value, RowSet):
+            return self._expanded_filters(value.table, self._rowset_mask(value))
+        if not value.filterable:
+            raise NotSupportedError("this table expression as a CALCULATE filter")
+        lineage = [c.column for c in value.columns]
+        if any(c is None for c in lineage):
+            raise NotSupportedError("a filter table with columns that aren't model columns")
+        columns: list[Column] = [c for c in lineage if c is not None]
+        if len({id(c.table) for c in columns}) > 1:
+            raise NotSupportedError("a filter table with columns from several tables")
+        if len({id(c) for c in columns}) < len(columns):
+            raise NotSupportedError("a filter table that names a column twice")
+        for c in columns:
+            self.storage.check_text(c)
+        frame = pl.DataFrame(
+            [
+                pl.Series(c.name, [row[i] for row in value.rows], dtype=c.data_type.polars_dtype)
+                for i, c in enumerate(columns)
+            ]
+        )
+        return [ColumnFilter(columns[0].table, columns, frame)]
+
+    def _expanded_filters(self, table: Table, mask: pl.Series) -> list[ColumnFilter]:
+        present = self.storage.present_columns(table)
+        for c in present:
+            self.storage.check_text(c)
+        names = [c.name for c in present]
+        result = [ColumnFilter(table, present, self.storage.ext(table).filter(mask).select(names))]
+        for many, one in self._expansion_steps(table):
+            other = one.table
+            self.storage._check_keys(self._relationship(many, one))
+            keys = self.storage.ext(table).filter(mask).select(normalized(many).alias("k"))["k"]
+            one_ext = self.storage.ext(other)
+            one_real = self.storage.real_rows(other)
+            one_keys = one_ext.select(normalized(one).alias("k"))["k"]
+            other_mask = one_keys.is_in(keys.drop_nulls().implode()).fill_null(False) & one_real
+            blank = self.storage.blank_index(other)
+            if blank is not None:
+                matched = keys.is_in(one_keys.filter(one_real).drop_nulls().implode())
+                if bool((~matched.fill_null(False)).any()):
+                    other_mask = other_mask.scatter(blank, True)
+            result.extend(self._expanded_filters(other, other_mask))
+        return result
+
+    def expanded_columns(self, table: Table) -> list[Column]:
+        """The columns of a table's expanded table (ALL(<table>) removes all of them)."""
+        columns = list(table.columns)
+        for _, one in self._expansion_steps(table):
+            columns.extend(self.expanded_columns(one.table))
+        return columns
+
+    def _expansion_steps(self, table: Table) -> list[tuple[Column, Column]]:
+        """Relationships from ``table`` towards their one side, as (many, one) keys."""
+        steps = []
+        reached = set()
+        for rel in self.model.relationships:
+            if rel.from_table is not table and rel.to_table is not table:
+                continue
+            if rel.cardinality is not Cardinality.MANY_TO_ONE:
+                raise NotSupportedError(
+                    f"table expansion across a {rel.cardinality.value.replace('_', '-')} "
+                    "relationship"
+                )
+            if rel.from_table is table and rel.is_active:
+                steps.append((rel.from_column, rel.to_column))
+                reached.add(id(rel.to_table))
+        for rel in self.model.relationships:
+            if rel.from_table is table and not rel.is_active and id(rel.to_table) not in reached:
+                raise NotSupportedError(
+                    f"table expansion when {table.name} has an inactive relationship to "
+                    f"{rel.to_table.name}"
+                )
+        return steps
+
+    def _relationship(self, a: Column, b: Column) -> Relationship:
+        for rel in self.model.relationships:
+            if {id(rel.from_column), id(rel.to_column)} == {id(a), id(b)}:
+                return rel
+        raise DaxError(f"No relationship between {a.ref} and {b.ref}.")
+
+    def _use_relationship(self, filters: FilterContext, rel: Relationship) -> FilterContext:
+        if rel.cardinality is Cardinality.MANY_TO_MANY:
+            raise NotSupportedError("USERELATIONSHIP on a many-to-many relationship")
+        pair = {id(rel.from_table), id(rel.to_table)}
+        for other in self.model.relationships:
+            if other is rel or {id(other.from_table), id(other.to_table)} != pair:
+                continue
+            state = filters.state(other)
+            if state.active:
+                filters = filters.override(other, replace(state, active=False))
+        return filters.override(rel, replace(filters.state(rel), active=True))
+
+    def _cross_filter(
+        self, filters: FilterContext, rel: Relationship, how: tuple[Column, str]
+    ) -> FilterContext:
+        _, direction = how
+        state = filters.state(rel)
+        if not state.active:
+            raise NotSupportedError("CROSSFILTER on an inactive relationship")
+        if direction == "NONE":
+            new = RelationshipState(True, False, False)
+        elif direction == "BOTH":
+            new = RelationshipState(True, True, True)
+        elif direction == "ONEWAY":
+            new = RelationshipState(True, True, False)
+        else:
+            raise NotSupportedError(f"CROSSFILTER with {direction}")
+        return filters.override(rel, new)
+
+    def _restore(self, filters: FilterContext, changes: _Changes, ctx: Context) -> FilterContext:
+        """ALLSELECTED: put back the filters of the last shadow filter context."""
+        assert ctx.shadow is not None
+        if changes.restore_all:
+            return FilterContext(ctx.shadow.filters, filters.overrides)
+        ids = {id(c) for c in changes.restore}
+        restored = []
+        for f in ctx.shadow.filters:
+            rest = [c for c in f.columns if id(c) in ids]
+            if not rest:
+                continue
+            if len(rest) < len(f.columns):
+                raise NotSupportedError("ALLSELECTED of part of a filter over several columns")
+            restored.append(f)
+        return FilterContext((*filters.remove(ids).filters, *restored), filters.overrides)
+
+    # --- tables as values ---------------------------------------------------------------
+
+    def _table_as_value(self, value: TableValue) -> Value:
+        """A one-column table used as a single value: BLANK when empty, an error when
+        it has more than one row."""
+        frame = self.to_frame(value)
+        if len(frame.columns) != 1:
+            raise DaxError(
+                "The expression refers to multiple columns. Multiple columns cannot be "
+                "converted to a scalar value."
+            )
+        if len(frame.rows) > 1:
+            raise _multiple_values(frame.columns[0].column)
+        return frame.rows[0][0] if frame.rows else None
+
+    def column_distinct(self, column: Column, ctx: Context, *, blank: bool) -> pl.Series:
+        """The distinct visible values of a column: VALUES (``blank=True``, including
+        the blank row's BLANK when that row is visible) or DISTINCT."""
+        self.storage.check_text(column)
+        mask = self._rowset_mask(
+            RowSet(column.table, self.storage.visible(column.table, ctx.filters), blank)
+        )
+        return self.storage.ext(column.table)[column.name].filter(mask).unique(maintain_order=True)
 
     # --- relationships ------------------------------------------------------------------
 
@@ -670,9 +1005,8 @@ def _countrows(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
     if isinstance(value, Frame):
         return len(value.rows) or None
     # A table reference never includes the blank row, even when the blank row is visible.
-    real = ev.storage.real_rows(value.table)
-    count = int((real if value.mask is None else value.mask & real).sum())
-    return count or None
+    # VALUES(<table>) and ALL(<table>) do.
+    return int(ev._rowset_mask(value).sum()) or None
 
 
 def _related(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
@@ -719,6 +1053,290 @@ def _lookup(ev: Evaluator, column: Column, key: Value) -> int | None:
     return real[0] if real else None
 
 
+_MULTIPLE_VALUES = "A table of multiple values was supplied where a single value was expected."
+
+_REMOVERS = ("ALL", "REMOVEFILTERS", "ALLEXCEPT", "ALLSELECTED", "ALLNOBLANKROW")
+
+
+def _multiple_values(column: Column | None) -> DaxError:
+    suffix = f" for column '{column.table.name}'[{column.name}]" if column is not None else ""
+    return DaxError(f"{_MULTIPLE_VALUES[:-1]}{suffix}.")
+
+
+@dataclass
+class _Changes:
+    """What CALCULATE's filter arguments ask for, gathered before any is applied."""
+
+    overwrite: list[ColumnFilter] = field(default_factory=list)
+    keep: list[ColumnFilter] = field(default_factory=list)
+    remove: set[int] = field(default_factory=set)
+    remove_all: bool = False
+    restore: list[Column] = field(default_factory=list)
+    restore_all: bool = False
+    use: list[Relationship] = field(default_factory=list)
+    cross: list[tuple[Relationship, tuple[Column, str]]] = field(default_factory=list)
+
+
+class _NoVector(Exception):
+    """The condition isn't one of the simple shapes :func:`_vector_condition` handles."""
+
+
+_FLIPPED = {"=": "=", "==": "==", "<>": "<>", "<": ">", "<=": ">=", ">": "<", ">=": "<="}
+_NUMERIC = (DaxType.INTEGER, DaxType.DECIMAL, DaxType.CURRENCY)
+
+
+def _vector_condition(node: Any, frame: pl.DataFrame, columns: list[Column]) -> pl.Series | None:
+    """A True/False filter evaluated over all value combinations at once.
+
+    Handles comparisons of a column with a number or text literal, IN with a list of
+    literals, and &&, || and NOT of those, with the same rules as the scalar
+    operators. Anything else returns None and is evaluated one row at a time.
+    """
+    try:
+        expr = _vector_expr(node, frame, columns)
+    except _NoVector:
+        return None
+    return frame.select(expr.fill_null(False).alias("r"))["r"]
+
+
+def _vector_expr(node: Any, frame: pl.DataFrame, columns: list[Column]) -> pl.Expr:
+    if isinstance(node, BinaryOp) and node.op in ("&&", "||"):
+        left = _vector_expr(node.left, frame, columns)
+        right = _vector_expr(node.right, frame, columns)
+        return left & right if node.op == "&&" else left | right
+    if isinstance(node, Call) and node.name == "NOT":
+        return ~_vector_expr(node.args[0], frame, columns)
+    if not isinstance(node, BinaryOp):
+        raise _NoVector
+    if node.op == "IN" and isinstance(node.right, TableConstructor):
+        column = _vector_column(node.left, frame, columns)
+        if any(len(row) != 1 or not isinstance(row[0], Literal_) for row in node.right.rows):
+            raise _NoVector
+        literals = [row[0].value for row in node.right.rows]  # type: ignore[attr-defined]
+        present = [v for v in literals if v is not None]
+        for v in present:
+            _vector_literal(column, v)
+        col = pl.col(column.name)
+        if column.data_type is DaxType.STRING:
+            col = col.str.to_lowercase()
+            present = [v.lower() for v in present]
+        elif column.data_type is DaxType.CURRENCY:
+            col = col.cast(pl.Float64)
+        result = col.is_in(present)
+        if None in literals:
+            result = result | col.is_null()
+        return result
+    if node.op not in _FLIPPED:
+        raise _NoVector
+    op, subject, literal = node.op, node.left, node.right
+    if isinstance(subject, Literal_):
+        op, subject, literal = _FLIPPED[op], literal, subject
+    if not isinstance(literal, Literal_) or literal.value is None:
+        raise _NoVector
+    column = _vector_column(subject, frame, columns)
+    value = _vector_literal(column, literal.value)
+    col = pl.col(column.name)
+    if column.data_type is DaxType.STRING:
+        if op not in ("=", "<>", "=="):
+            raise _NoVector
+        col, value = col.str.to_lowercase(), value.lower()
+        blank: Any = ""
+    else:
+        if column.data_type is DaxType.CURRENCY:
+            col = col.cast(pl.Float64)
+        blank = 0
+    lit = pl.lit(value)
+    if op == "==":
+        return col == lit  # BLANK only equals BLANK, so a null row is False
+    col = col.fill_null(blank)
+    return {
+        "=": col == lit,
+        "<>": col != lit,
+        "<": col < lit,
+        "<=": col <= lit,
+        ">": col > lit,
+        ">=": col >= lit,
+    }[op]
+
+
+def _vector_column(node: Any, frame: pl.DataFrame, columns: list[Column]) -> Column:
+    if not is_column(node) or not any(node is c for c in columns):
+        raise _NoVector
+    column: Column = node
+    if column.data_type is DaxType.DECIMAL and frame[column.name].is_nan().any():
+        raise _NoVector  # comparing NaN isn't supported; let the scalar path say so
+    return column
+
+
+def _vector_literal(column: Column, value: Any) -> Any:
+    if column.data_type is DaxType.STRING and isinstance(value, str):
+        return value
+    if (
+        column.data_type in _NUMERIC
+        and isinstance(value, int | float)
+        and not isinstance(value, bool)
+    ):
+        return value
+    raise _NoVector
+
+
+def _calculate(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
+    return ev.scalar(args[0], ev.calculate_context(args[1:], ctx))
+
+
+def _calculatetable(ev: Evaluator, args: list[Any], ctx: Context) -> TableValue:
+    return ev.table(args[0], ev.calculate_context(args[1:], ctx))
+
+
+def _all_table(name: str) -> Callable[[Evaluator, list[Any], Context], TableValue]:
+    def handler(ev: Evaluator, args: list[Any], ctx: Context) -> TableValue:
+        blank = name == "ALL"
+        if len(args) == 1 and not is_column(args[0]):
+            return RowSet(args[0], None, blank)
+        columns: list[Column] = list(args)
+        table = columns[0].table
+        for c in columns:
+            ev.storage.check_text(c)
+        names = [c.name for c in columns]
+        ext = ev.storage.ext(table)
+        rows = ext if blank else ext.filter(ev.storage.real_rows(table))
+        values = rows.select(names).unique(maintain_order=True)
+        return Frame(
+            [ResultColumn(f"{table.name}[{c.name}]", c.data_type, c) for c in columns],
+            [list(r) for r in values.rows()],
+        )
+
+    return handler
+
+
+def _values_table(name: str) -> Callable[[Evaluator, list[Any], Context], TableValue]:
+    def handler(ev: Evaluator, args: list[Any], ctx: Context) -> TableValue:
+        arg = args[0]
+        if is_column(arg):
+            values = ev.column_distinct(arg, ctx, blank=name == "VALUES")
+            column = ResultColumn(f"{arg.table.name}[{arg.name}]", arg.data_type, arg)
+            return Frame([column], [[v] for v in values.to_list()])
+        if not getattr(arg, "is_table_ref", False):
+            raise NotSupportedError(f"{name} of a table expression", phase=5)
+        mask = ev.storage.visible(arg, ctx.filters)
+        if name == "VALUES":
+            return RowSet(arg, mask, blank=True)
+        frame = ev.to_frame(RowSet(arg, mask))
+        unique = (
+            pl.DataFrame(frame.rows, orient="row").unique(maintain_order=True)
+            if frame.rows
+            else None
+        )
+        rows = [list(r) for r in unique.rows()] if unique is not None else []
+        return Frame(frame.columns, rows, filterable=False)
+
+    return handler
+
+
+def _filters_table(ev: Evaluator, args: list[Any], ctx: Context) -> TableValue:
+    column: Column = args[0]
+    ev.storage.check_text(column)
+    mask = ev.storage.direct_mask(column, ctx.filters)
+    values = ev.storage.ext(column.table)[column.name]
+    if mask is not None:
+        values = values.filter(mask)
+    result = ResultColumn(f"{column.table.name}[{column.name}]", column.data_type, column)
+    return Frame([result], [[v] for v in values.unique(maintain_order=True).to_list()])
+
+
+def _treatas(ev: Evaluator, args: list[Any], ctx: Context) -> TableValue:
+    columns: list[Column] = list(args[1:])
+    frame = ev.to_frame(ev.table(args[0], ctx))
+    if len(frame.columns) != len(columns):
+        raise DaxError(
+            f"The number of columns in the table ({len(frame.columns)}) must match the number "
+            f"of column references in TREATAS ({len(columns)})."
+        )
+    for source, target in zip(frame.columns, columns, strict=True):
+        if source.dax_type != target.data_type:
+            raise NotSupportedError(
+                f"TREATAS from a column of type {source.dax_type} to {target.ref}"
+            )
+    result = [ResultColumn(f"{c.table.name}[{c.name}]", c.data_type, c) for c in columns]
+    return Frame(result, frame.rows)
+
+
+def _hasonevalue(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
+    return ev.column_distinct(args[0], ctx, blank=True).len() == 1
+
+
+def _hasonefilter(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
+    column: Column = args[0]
+    if not ctx.filters.direct(column):
+        return False
+    frame = _filters_table(ev, args, ctx)
+    assert isinstance(frame, Frame)
+    return len(frame.rows) == 1
+
+
+def _selectedvalue(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
+    values = ev.column_distinct(args[0], ctx, blank=True)
+    if values.len() == 1:
+        value = values[0]
+    else:
+        alternate = _alternate("SELECTEDVALUE", args)
+        value = None if alternate is None else ev.scalar(alternate, ctx)
+    return convert(value, infer_type(Call("SELECTEDVALUE", args)))
+
+
+def _isfiltered(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
+    arg = args[0]
+    if is_column(arg):
+        return bool(ctx.filters.direct(arg))
+    return any(f.table is arg for f in ctx.filters.filters)
+
+
+def _iscrossfiltered(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
+    arg = args[0]
+    table = arg.table if is_column(arg) else arg
+    return ev.storage.visible(table, ctx.filters) is not None
+
+
+def _isinscope(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
+    column: Column = args[0]
+    return any(f.grouping for f in ctx.filters.direct(column))
+
+
+def _lookupvalue(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
+    result: Column = args[0]
+    alternate = _alternate("LOOKUPVALUE", args)
+    end = len(args) - 1 if alternate is not None else len(args)
+    table = result.table
+    ext = ev.storage.ext(table)
+    # Filters on the table's expanded table are ignored, as with REMOVEFILTERS(<table>);
+    # filters that reach it through a two-way relationship still apply.
+    filters = ctx.filters.remove({id(c) for c in ev.expanded_columns(table)})
+    visible = ev.storage.visible(table, filters)
+    mask = ev.storage.real_rows(table)
+    if visible is not None:
+        mask = mask & visible
+    for i in range(1, end, 2):
+        column: Column = args[i]
+        if column.table is not table:
+            raise NotSupportedError("LOOKUPVALUE with search columns from another table")
+        wanted = ev.scalar(args[i + 1], ctx)
+        if wanted is None:
+            raise NotSupportedError("LOOKUPVALUE searching for BLANK")
+        ev.storage.check_text(column)
+        values = ext[column.name].to_list()
+        hits = [v is not None and sc.compare("=", v, wanted) for v in values]
+        mask = mask & pl.Series(hits, dtype=pl.Boolean)
+    ev.storage.check_text(result)
+    found = ext[result.name].filter(mask).unique()
+    if found.len() == 1:
+        value = found[0]
+    elif found.len() == 0 or alternate is not None:
+        value = None if alternate is None else ev.scalar(alternate, ctx)
+    else:
+        raise _multiple_values(result)
+    return convert(value, infer_type(Call("LOOKUPVALUE", args)))
+
+
 _SCALAR_FUNCTIONS: dict[str, Handler] = {
     "BLANK": _blank,
     "TRUE": _true,
@@ -738,7 +1356,32 @@ _SCALAR_FUNCTIONS: dict[str, Handler] = {
     "DISTINCTCOUNTNOBLANK": _count("DISTINCTCOUNTNOBLANK"),
     "COUNTROWS": _countrows,
     "RELATED": _related,
+    "CALCULATE": _calculate,
+    "HASONEVALUE": _hasonevalue,
+    "HASONEFILTER": _hasonefilter,
+    "SELECTEDVALUE": _selectedvalue,
+    "ISFILTERED": _isfiltered,
+    "ISCROSSFILTERED": _iscrossfiltered,
+    "ISINSCOPE": _isinscope,
+    "LOOKUPVALUE": _lookupvalue,
 }
 
-EVALUATED = frozenset(_SCALAR_FUNCTIONS) | {"ROW", "SUMMARIZECOLUMNS", "RELATEDTABLE"}
+_TABLE_FUNCTIONS: dict[str, Callable[[Evaluator, list[Any], Context], TableValue]] = {
+    "CALCULATETABLE": _calculatetable,
+    "ALL": _all_table("ALL"),
+    "ALLNOBLANKROW": _all_table("ALLNOBLANKROW"),
+    "VALUES": _values_table("VALUES"),
+    "DISTINCT": _values_table("DISTINCT"),
+    "FILTERS": _filters_table,
+    "TREATAS": _treatas,
+}
+
+EVALUATED = (
+    frozenset(_SCALAR_FUNCTIONS)
+    | frozenset(_TABLE_FUNCTIONS)
+    | {
+        "ROW", "SUMMARIZECOLUMNS", "RELATEDTABLE", "ALLEXCEPT", "ALLSELECTED",
+        "REMOVEFILTERS", "KEEPFILTERS", "USERELATIONSHIP", "CROSSFILTER",
+    }
+)  # fmt: skip
 """Functions this engine evaluates (some only in their simple forms)."""
