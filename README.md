@@ -175,6 +175,37 @@ model.evaluate(
   (`iterators`, `tables`, `summarizecolumns` and `window`), including a matrix with
   subtotals and a grand total that matches cell for cell.
 
+**Phase 6 (scalar function library) is done.**
+
+```python
+from pythonic_dax import DIVIDE, FORMAT, INFO, SWITCH, TRUE
+
+label = SWITCH(TRUE(), total > 1000, "Big", total > 100, "Medium", "Small")
+margin = FORMAT(DIVIDE(profit, total), "0.0%")
+month = FORMAT(Date["Date"], "mmm yyyy")
+model.evaluate(INFO.VIEW.MEASURES())  # the model's measures as a table, as in Power BI
+```
+
+* **Functions:** logic and information (`DIVIDE`, `SWITCH`, `COALESCE`, `IFERROR`,
+  `ISERROR`, `ISBLANK` and the other IS functions, `CONTAINS`, `CONTAINSROW`), math
+  (`ROUND` family, `INT`, `TRUNC`, `MOD`, `CEILING`, `FLOOR`, `MROUND`, `QUOTIENT`, `POWER`,
+  `SQRT`, logarithms), text (`LEFT` to `CONTAINSSTRING`), conversion (`VALUE`, `FIXED`,
+  `CONVERT`, `CURRENCY`), dates and times (`DATE`, `TIME`, `EDATE`, `EOMONTH`,
+  `DATEDIFF`, `WEEKNUM` and the rest), and `FORMAT` with Power BI's format strings.
+* **Types and BLANK as in Power BI:** `ROUND` keeps a whole number whole, `DIVIDE`
+  returns a decimal, `SWITCH` unifies its branches, and BLANK in gives BLANK out where
+  Power BI does so. `ROUND` reads a double to 15 significant digits, so
+  `ROUND(1.005, 2)` is 1.01.
+* **Errors:** `IFERROR` and `ISERROR` catch the errors Power BI catches, including
+  infinite and NaN results.
+* **INFO.VIEW:** `INFO.VIEW.TABLES()`, `COLUMNS()`, `MEASURES()` and `RELATIONSHIPS()`
+  return Power BI's columns. IDs and other engine-only values are our own or BLANK.
+* **Refused rather than guessed:** locales other than en-US in `FORMAT`, text Power BI
+  might read differently (`VALUE`, `DATEVALUE`, `TIMEVALUE`), and inputs whose answer
+  wasn't checked, such as BLANK into `SQRT`.
+* **Checked against Power BI Desktop:** 8 golden cases with 308 values in
+  `tests/golden/cases/library`.
+
 Anything else raises `NotSupportedError` naming the phase that brings it. The engine
 never guesses at an answer that might differ from Power BI.
 

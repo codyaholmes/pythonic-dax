@@ -1,0 +1,102 @@
+id: library-edge-cases
+description: >-
+  Edge cases checked in a second pass: BLANK in RIGHT, MID, LOWER, SUBSTITUTE, REPT, POWER, CEILING, MROUND
+  and QUOTIENT gives BLANK, while REPLACE and FIXED treat BLANK as empty text or 0. DIVIDE(BLANK(), 0,
+  9) is BLANK. ROUND reads doubles to 15 significant digits. Large numbers as text use E notation. FORMAT
+  of a negative Currency uses parentheses. VALUE accepts a sign, an exponent and a leading $, but not
+  %.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+  relationships: []
+python: |
+  from pythonic_dax.expr import coerce as c
+  result = model.evaluate(ROW(
+      'RtB', RIGHT(BLANK(), c(2)),
+      'MidB', MID(BLANK(), c(1), c(2)),
+      'LoB', LOWER(BLANK()),
+      'SubB', SUBSTITUTE(BLANK(), 'a', 'b'),
+      'RepB', REPLACE(BLANK(), c(1), c(1), 'x'),
+      'ReptB', REPT(BLANK(), c(2)),
+      'CatAB', CONCATENATE('a', BLANK()),
+      'PowB', POWER(BLANK(), c(2)),
+      'CeilB', CEILING(BLANK(), c(1)),
+      'MrB', MROUND(BLANK(), c(2)),
+      'QuoB', QUOTIENT(BLANK(), c(2)),
+      'LnNeg', ISERROR(LN((-c(1)))),
+      'LogNeg', ISERROR(LOG((-c(1)))),
+      'ModZB', ISERROR(MOD(c(3), BLANK())),
+      'DivB0', DIVIDE(BLANK(), c(0), c(9)),
+      'Rnd15', ROUND(c(1.004999999999999), c(2)),
+      'TxtE15', (c(1E15)).concat(''),
+      'TxtTiny', (c(0.000001)).concat(''),
+      'TxtNeg', ((-c(0.5))).concat(''),
+      'CurNeg', FORMAT((-c(5)), 'Currency'),
+      'FmtNegZero', FORMAT((-c(0.4)), '0'),
+      'CvNeg', CONVERT((-c(2.5)), INTEGER),
+      'CvBlank', CONVERT(BLANK(), INTEGER),
+      'TV3', TIMEVALUE('13:30:15'),
+      'ValNeg', VALUE('-5'),
+      'ValE', VALUE('1E3'),
+      'ValDollar', ISERROR(VALUE('$5')),
+      'ValPct', ISERROR(VALUE('50%')),
+      'MoB', MONTH(BLANK()),
+      'HB', HOUR(BLANK()),
+      'DayB', DAY(BLANK()),
+      'FixB', FIXED(BLANK()),
+      'CeilCur', CEILING(CURRENCY(c(4.3)), c(1)),
+      'DDB2', DATEDIFF(DATE(c(2024), c(1), c(1)), BLANK(), DAY),
+  ))
+dax: |
+  EVALUATE
+      ROW("RtB", RIGHT(BLANK(), 2), "MidB", MID(BLANK(), 1, 2), "LoB", LOWER(BLANK()), "SubB", SUBSTITUTE(BLANK(), "a", "b"), "RepB", REPLACE(BLANK(), 1, 1, "x"), "ReptB", REPT(BLANK(), 2), "CatAB", CONCATENATE("a", BLANK()), "PowB", POWER(BLANK(), 2), "CeilB", CEILING(BLANK(), 1), "MrB", MROUND(BLANK(), 2), "QuoB", QUOTIENT(BLANK(), 2), "LnNeg", ISERROR(LN(-1)), "LogNeg", ISERROR(LOG(-1)), "ModZB", ISERROR(MOD(3, BLANK())), "DivB0", DIVIDE(BLANK(), 0, 9), "Rnd15", ROUND(1.004999999999999, 2), "TxtE15", 1000000000000000.0 & "", "TxtTiny", 1e-06 & "", "TxtNeg", -0.5 & "", "CurNeg", FORMAT(-5, "Currency"), "FmtNegZero", FORMAT(-0.4, "0"), "CvNeg", CONVERT(-2.5, INTEGER), "CvBlank", CONVERT(BLANK(), INTEGER), "TV3", TIMEVALUE("13:30:15"), "ValNeg", VALUE("-5"), "ValE", VALUE("1E3"), "ValDollar", ISERROR(VALUE("$5")), "ValPct", ISERROR(VALUE("50%")), "MoB", MONTH(BLANK()), "HB", HOUR(BLANK()), "DayB", DAY(BLANK()), "FixB", FIXED(BLANK()), "CeilCur", CEILING(CURRENCY(4.3), 1), "DDB2", DATEDIFF(DATE(2024, 1, 1), BLANK(), DAY))
+expected:
+  ordered: false
+  columns:
+    '[RtB]': string
+    '[MidB]': string
+    '[LoB]': string
+    '[SubB]': string
+    '[RepB]': string
+    '[ReptB]': string
+    '[CatAB]': string
+    '[PowB]': decimal
+    '[CeilB]': integer
+    '[MrB]': integer
+    '[QuoB]': integer
+    '[LnNeg]': boolean
+    '[LogNeg]': boolean
+    '[ModZB]': boolean
+    '[DivB0]': decimal
+    '[Rnd15]': decimal
+    '[TxtE15]': string
+    '[TxtTiny]': string
+    '[TxtNeg]': string
+    '[CurNeg]': string
+    '[FmtNegZero]': string
+    '[CvNeg]': integer
+    '[CvBlank]': integer
+    '[TV3]': datetime
+    '[ValNeg]': decimal
+    '[ValE]': decimal
+    '[ValDollar]': boolean
+    '[ValPct]': boolean
+    '[MoB]': integer
+    '[HB]': integer
+    '[DayB]': integer
+    '[FixB]': string
+    '[CeilCur]': currency
+    '[DDB2]': integer
+  rows:
+  - [null, null, null, null, x, null, a, null, null, null, null, true, true, true,
+    null, 1.01, 1E+15, '0.000001', '-0.5', ($5.00), '0', -3, null, '1899-12-30T13:30:15', -5, 1000, false,
+    true, null, null, null, '0.00', 5, null]

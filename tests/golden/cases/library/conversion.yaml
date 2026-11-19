@@ -1,0 +1,90 @@
+id: library-conversion
+description: >-
+  VALUE returns a decimal and accepts thousands separators and spaces. FIXED rounds half away from zero,
+  with commas unless told otherwise. CONVERT to INTEGER rounds halves away from zero. Decimal numbers
+  become text with up to 15 significant digits; dates become m/d/yyyy text.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+  relationships: []
+python: |
+  from pythonic_dax.expr import coerce as c
+  result = model.evaluate(ROW(
+      'Val', VALUE('12'),
+      'ValD', VALUE('1.5'),
+      'ValC', VALUE('1,234.5'),
+      'ValSp', VALUE(' 3 '),
+      'ValB', VALUE(BLANK()),
+      'ValN', VALUE(c(7)),
+      'Fix', FIXED(c(1234.567)),
+      'Fix1', FIXED(c(1234.567), c(1)),
+      'FixNC', FIXED(c(1234.567), c(1), TRUE()),
+      'FixNeg', FIXED((-c(1234.5)), c(0)),
+      'FixNegDig', FIXED(c(1234.5), (-c(2))),
+      'CvI', CONVERT(c(2.7), INTEGER),
+      'CvI2', CONVERT(c(2.5), INTEGER),
+      'CvI3', CONVERT(c(3.5), INTEGER),
+      'CvS', CONVERT(c(1.5), STRING),
+      'CvB', CONVERT(c(1), BOOLEAN),
+      'CvD', CONVERT('2.5', DOUBLE),
+      'CvDT', CONVERT(c(45000), DATETIME),
+      'CvC', CONVERT(c(1.23456), CURRENCY),
+      'Cur', CURRENCY(c(1.23456)),
+      'CurB', CURRENCY(BLANK()),
+      'TxtD', (c(1.5)).concat(''),
+      'TxtD2', ((c(0.1) + c(0.2))).concat(''),
+      'TxtBig', (c(1E20)).concat(''),
+      'TxtSmall', (c(0.00001)).concat(''),
+      'TxtCur', (CURRENCY(c(1.5))).concat(''),
+      'TxtDate', (DATE(c(2024), c(3), c(5))).concat(''),
+      'TxtDT', ((DATE(c(2024), c(3), c(5)) + TIME(c(13), c(4), c(5)))).concat(''),
+      'TxtThird', ((c(1) / c(3))).concat(''),
+  ))
+dax: |
+  EVALUATE
+      ROW("Val", VALUE("12"), "ValD", VALUE("1.5"), "ValC", VALUE("1,234.5"), "ValSp", VALUE(" 3 "), "ValB", VALUE(BLANK()), "ValN", VALUE(7), "Fix", FIXED(1234.567), "Fix1", FIXED(1234.567, 1), "FixNC", FIXED(1234.567, 1, TRUE()), "FixNeg", FIXED(-1234.5, 0), "FixNegDig", FIXED(1234.5, -2), "CvI", CONVERT(2.7, INTEGER), "CvI2", CONVERT(2.5, INTEGER), "CvI3", CONVERT(3.5, INTEGER), "CvS", CONVERT(1.5, STRING), "CvB", CONVERT(1, BOOLEAN), "CvD", CONVERT("2.5", DOUBLE), "CvDT", CONVERT(45000, DATETIME), "CvC", CONVERT(1.23456, CURRENCY), "Cur", CURRENCY(1.23456), "CurB", CURRENCY(BLANK()), "TxtD", 1.5 & "", "TxtD2", 0.1 + 0.2 & "", "TxtBig", 1e+20 & "", "TxtSmall", 1e-05 & "", "TxtCur", CURRENCY(1.5) & "", "TxtDate", DATE(2024, 3, 5) & "", "TxtDT", DATE(2024, 3, 5) + TIME(13, 4, 5) & "", "TxtThird", 1 / 3 & "")
+expected:
+  ordered: false
+  columns:
+    '[Val]': decimal
+    '[ValD]': decimal
+    '[ValC]': decimal
+    '[ValSp]': decimal
+    '[ValB]': decimal
+    '[ValN]': decimal
+    '[Fix]': string
+    '[Fix1]': string
+    '[FixNC]': string
+    '[FixNeg]': string
+    '[FixNegDig]': string
+    '[CvI]': integer
+    '[CvI2]': integer
+    '[CvI3]': integer
+    '[CvS]': string
+    '[CvB]': boolean
+    '[CvD]': decimal
+    '[CvDT]': datetime
+    '[CvC]': currency
+    '[Cur]': currency
+    '[CurB]': currency
+    '[TxtD]': string
+    '[TxtD2]': string
+    '[TxtBig]': string
+    '[TxtSmall]': string
+    '[TxtCur]': string
+    '[TxtDate]': string
+    '[TxtDT]': string
+    '[TxtThird]': string
+  rows:
+  - [12, 1.5, 1234.5, 3, null, 7, '1,234.57', '1,234.6', '1234.6', '-1,235', '1,200',
+    3, 3, 4, '1.5', true, 2.5, '2023-03-15T00:00:00', 1.2346, 1.2346, null, '1.5', '0.3', 1E+20, '0.00001',
+    '1.5', 3/5/2024, '3/5/2024 1:04:05 PM', '0.333333333333333']

@@ -1,0 +1,114 @@
+id: library-text
+description: >-
+  Text functions return BLANK for BLANK. Numbers become text first. TRIM collapses inner spaces. SUBSTITUTE
+  matches case and can replace one instance. SEARCH ignores case and takes ? and * wildcards, FIND matches
+  case. EXACT treats BLANK as empty text. CONTAINSSTRING of BLANK is FALSE.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Customer:
+      columns:
+        CustomerKey: integer
+        Name: string
+      rows:
+      - [1, Ann]
+      - [2, Bob]
+  relationships: []
+python: |
+  from pythonic_dax.expr import coerce as c
+  result = model.evaluate(ROW(
+      'Cat', CONCATENATE('a', c(1)),
+      'CatB', CONCATENATE(BLANK(), BLANK()),
+      'L', LEFT('Hello', c(2)),
+      'L1', LEFT('Hello'),
+      'LB', LEFT(BLANK(), c(2)),
+      'LN', LEFT(c(12345), c(2)),
+      'LBig', LEFT('Hi', c(10)),
+      'Rt', RIGHT('Hello', c(3)),
+      'M', MID('Hello', c(2), c(3)),
+      'MBig', MID('Hello', c(4), c(10)),
+      'MPast', MID('Hello', c(9), c(2)),
+      'Len', LEN('Hello'),
+      'LenB', LEN(BLANK()),
+      'LenN', LEN(c(123)),
+      'Up', UPPER('abc'),
+      'UpB', UPPER(BLANK()),
+      'Lo', LOWER('ABC'),
+      'Trim', TRIM('  a   b  '),
+      'TrimB', TRIM(BLANK()),
+      'Sub', SUBSTITUTE('a-b-c', '-', '+'),
+      'Sub2', SUBSTITUTE('a-b-c', '-', '+', c(2)),
+      'SubCase', SUBSTITUTE('aAa', 'a', 'x'),
+      'Rep', REPLACE('abcdef', c(2), c(3), 'X'),
+      'Se', SEARCH('B', 'abcb'),
+      'Se2', SEARCH('b', 'abcb', c(3)),
+      'SeW', SEARCH('a?c', 'xabc'),
+      'SeStar', SEARCH('a*c', 'xabbbc'),
+      'SeNF', SEARCH('z', 'abc', c(1), (-c(1))),
+      'SeNFB', SEARCH('z', 'abc', c(1), BLANK()),
+      'Fi', FIND('B', 'abcB'),
+      'FiNF', FIND('z', 'abc', c(1), c(0)),
+      'FiEmpty', FIND('', 'abc'),
+      'Rept', REPT('ab', c(3)),
+      'Rept0', REPT('ab', c(0)),
+      'Ex', EXACT('a', 'A'),
+      'Ex2', EXACT('a', 'a'),
+      'ExB', EXACT(BLANK(), ''),
+      'CS', CONTAINSSTRING('Hello', 'ELL'),
+      'CSW', CONTAINSSTRING('Hello', 'H*o'),
+      'CSE', CONTAINSSTRINGEXACT('Hello', 'ELL'),
+      'CSB', CONTAINSSTRING(BLANK(), ''),
+  ))
+dax: |
+  EVALUATE
+      ROW("Cat", CONCATENATE("a", 1), "CatB", CONCATENATE(BLANK(), BLANK()), "L", LEFT("Hello", 2), "L1", LEFT("Hello"), "LB", LEFT(BLANK(), 2), "LN", LEFT(12345, 2), "LBig", LEFT("Hi", 10), "Rt", RIGHT("Hello", 3), "M", MID("Hello", 2, 3), "MBig", MID("Hello", 4, 10), "MPast", MID("Hello", 9, 2), "Len", LEN("Hello"), "LenB", LEN(BLANK()), "LenN", LEN(123), "Up", UPPER("abc"), "UpB", UPPER(BLANK()), "Lo", LOWER("ABC"), "Trim", TRIM("  a   b  "), "TrimB", TRIM(BLANK()), "Sub", SUBSTITUTE("a-b-c", "-", "+"), "Sub2", SUBSTITUTE("a-b-c", "-", "+", 2), "SubCase", SUBSTITUTE("aAa", "a", "x"), "Rep", REPLACE("abcdef", 2, 3, "X"), "Se", SEARCH("B", "abcb"), "Se2", SEARCH("b", "abcb", 3), "SeW", SEARCH("a?c", "xabc"), "SeStar", SEARCH("a*c", "xabbbc"), "SeNF", SEARCH("z", "abc", 1, -1), "SeNFB", SEARCH("z", "abc", 1, BLANK()), "Fi", FIND("B", "abcB"), "FiNF", FIND("z", "abc", 1, 0), "FiEmpty", FIND("", "abc"), "Rept", REPT("ab", 3), "Rept0", REPT("ab", 0), "Ex", EXACT("a", "A"), "Ex2", EXACT("a", "a"), "ExB", EXACT(BLANK(), ""), "CS", CONTAINSSTRING("Hello", "ELL"), "CSW", CONTAINSSTRING("Hello", "H*o"), "CSE", CONTAINSSTRINGEXACT("Hello", "ELL"), "CSB", CONTAINSSTRING(BLANK(), ""))
+expected:
+  ordered: false
+  columns:
+    '[Cat]': string
+    '[CatB]': string
+    '[L]': string
+    '[L1]': string
+    '[LB]': string
+    '[LN]': string
+    '[LBig]': string
+    '[Rt]': string
+    '[M]': string
+    '[MBig]': string
+    '[MPast]': string
+    '[Len]': integer
+    '[LenB]': integer
+    '[LenN]': integer
+    '[Up]': string
+    '[UpB]': string
+    '[Lo]': string
+    '[Trim]': string
+    '[TrimB]': string
+    '[Sub]': string
+    '[Sub2]': string
+    '[SubCase]': string
+    '[Rep]': string
+    '[Se]': integer
+    '[Se2]': integer
+    '[SeW]': integer
+    '[SeStar]': integer
+    '[SeNF]': integer
+    '[SeNFB]': integer
+    '[Fi]': integer
+    '[FiNF]': integer
+    '[FiEmpty]': integer
+    '[Rept]': string
+    '[Rept0]': string
+    '[Ex]': boolean
+    '[Ex2]': boolean
+    '[ExB]': boolean
+    '[CS]': boolean
+    '[CSW]': boolean
+    '[CSE]': boolean
+    '[CSB]': boolean
+  rows:
+  - [a1, null, He, H, null, '12', Hi, llo, ell, lo, '', 5, null, 3, ABC, null, abc,
+    a b, null, a+b+c, a-b+c, xAx, aXef, 2, 4, 2, 2, -1, null, 4, 0, 1, ababab, '', false, true, true,
+    true, true, false, false]

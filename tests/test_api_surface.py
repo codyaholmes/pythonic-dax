@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import subprocess
 import sys
 from pathlib import Path
@@ -26,9 +27,9 @@ def test_not_supported_is_a_not_implemented_error() -> None:
 
 def test_unbuilt_function_names_its_phase() -> None:
     model = pdax.Model()
-    model.add_table("T", pl.DataFrame({"x": [1]}))
-    with pytest.raises(pdax.NotSupportedError, match="Phase 6"):
-        model.evaluate(pdax.ROW("v", pdax.ABS(-1)))
+    t = model.add_table("T", pl.DataFrame({"d": [dt.datetime(2024, 1, 1)], "x": [1]}))
+    with pytest.raises(pdax.NotSupportedError, match="Phase 7"):
+        model.evaluate(pdax.ROW("v", pdax.TOTALYTD(pdax.SUM(t["x"]), t["d"])))
 
 
 def test_planned_names_are_upper_case_dax_names() -> None:

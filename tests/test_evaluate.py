@@ -74,8 +74,9 @@ def test_column_without_row_context_is_an_error(model: pdax.Model) -> None:
 
 
 def test_unbuilt_functions_raise_not_supported(model: pdax.Model) -> None:
-    with pytest.raises(pdax.NotSupportedError, match="Phase 6"):
-        value(model, pdax.ABS(-1))
+    calendar = pdax.CALENDAR(pdax.DATE(2024, 1, 1), pdax.DATE(2024, 1, 2))
+    with pytest.raises(pdax.NotSupportedError, match="Phase 7"):
+        value(model, pdax.COUNTROWS(calendar))
 
 
 # --- variables --------------------------------------------------------------------------
