@@ -9,17 +9,28 @@ from __future__ import annotations
 
 import contextlib
 import re
+from collections.abc import Iterator
 
 import pytest
 
 import pythonic_dax as pdax
 from golden.harness import Case, Run, compare, discover_cases, normalize_dax, run_case
+from pythonic_dax import _vector
 
 CASES = discover_cases()
 
 
+@pytest.fixture(params=["fast", "row-by-row"])
+def engine(request: pytest.FixtureRequest) -> Iterator[str]:
+    """Every case runs with the Phase 9 fast paths and without them (the formula
+    engine alone), and both must match Power BI."""
+    _vector.ENABLED = request.param == "fast"
+    yield request.param
+    _vector.ENABLED = True
+
+
 @pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
-def test_golden(case: Case) -> None:
+def test_golden(case: Case, engine: str) -> None:
     error = case.expected.error
     try:
         result = run_case(case)

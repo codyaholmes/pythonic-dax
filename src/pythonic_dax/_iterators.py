@@ -14,9 +14,11 @@ from decimal import Decimal
 from typing import Any
 
 from . import _scalar as sc
-from ._evaluate import Context, Evaluator, FrameRow, Value, convert, infer_type
+from . import _vector
+from ._evaluate import Context, Evaluator, FrameRow, RowSet, Value, convert, infer_type
+from ._vector import NoVector, iterate_rowset
 from .errors import DaxError, NotSupportedError
-from .expr import Call, Keyword, _Omitted, is_column
+from .expr import Call, Keyword, TableCall, _Omitted, is_column
 
 Handler = Callable[[Evaluator, list[Any], Context], Value]
 
@@ -219,12 +221,31 @@ def _has(ev: Evaluator, row: Any, column: Any) -> bool:
     return row.columns is None or any(c is column for c in row.columns)
 
 
+def _vectorized(name: str, handler: Handler) -> Handler:
+    """Try the iterator in one Polars pass over a model table's visible rows (see
+    ``_vector.py``), and go row by row when its expression isn't a supported shape."""
+
+    def wrapped(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
+        if _vector.ENABLED and (
+            getattr(args[0], "is_table_ref", False) or isinstance(args[0], TableCall)
+        ):
+            value = ev.table(args[0], ctx)
+            if isinstance(value, RowSet):
+                try:
+                    return iterate_rowset(ev, name, value, args)
+                except NoVector:
+                    pass
+        return handler(ev, args, ctx)
+
+    return wrapped
+
+
 SCALAR: dict[str, Handler] = {
-    "SUMX": _sumx,
-    "AVERAGEX": _averagex,
-    "MINX": _min_maxx("MINX"),
-    "MAXX": _min_maxx("MAXX"),
-    "COUNTX": _countx("COUNTX"),
+    "SUMX": _vectorized("SUMX", _sumx),
+    "AVERAGEX": _vectorized("AVERAGEX", _averagex),
+    "MINX": _vectorized("MINX", _min_maxx("MINX")),
+    "MAXX": _vectorized("MAXX", _min_maxx("MAXX")),
+    "COUNTX": _vectorized("COUNTX", _countx("COUNTX")),
     "COUNTAX": _countx("COUNTAX"),
     "PRODUCTX": _productx,
     "CONCATENATEX": _concatenatex,

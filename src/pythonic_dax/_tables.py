@@ -35,6 +35,7 @@ from ._evaluate import (
     infer_type,
     unify,
 )
+from ._filters import bool_series
 from ._iterators import order_args, same_keys, sorted_rows
 from .errors import DaxError, NotSupportedError
 from .expr import Call, Literal_, _Omitted, is_column
@@ -77,7 +78,7 @@ def _filter(ev: Evaluator, args: list[Any], ctx: Context) -> TableValue:
         present = ev.storage.present_columns(value.table)
         ext = ev.storage.ext(value.table)
         indices = mask.arg_true()
-        hits = _vector_condition(cond, ext[indices.to_list()], present) if present else None
+        hits = _vector_condition(cond, ext[indices], present) if present else None
         if hits is None:
             keep = [
                 sc.to_bool(ev.scalar(cond, _with_row(ctx, RowRef(value.table, int(i)))))
@@ -85,7 +86,7 @@ def _filter(ev: Evaluator, args: list[Any], ctx: Context) -> TableValue:
             ]
             hits = pl.Series(keep, dtype=pl.Boolean)
         chosen = indices.filter(hits)
-        new = pl.Series([False] * ext.height, dtype=pl.Boolean).scatter(chosen, True)
+        new = bool_series(ext.height, False).scatter(chosen, True)
         return RowSet(value.table, new, value.blank)
     rows = [
         r
@@ -240,7 +241,7 @@ def _topn(ev: Evaluator, args: list[Any], ctx: Context) -> TableValue:
 def _subset(ev: Evaluator, value: TableValue, rows: list[Any]) -> TableValue:
     if isinstance(value, RowSet):
         height = ev.storage.ext(value.table).height
-        mask = pl.Series([False] * height, dtype=pl.Boolean)
+        mask = bool_series(height, False)
         if rows:
             mask = mask.scatter([r.index for r in rows], True)
         return RowSet(value.table, mask, value.blank)
