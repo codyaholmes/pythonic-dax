@@ -24,7 +24,14 @@ import polars as pl
 from . import _scalar as sc
 from ._build import row_context_columns
 from ._coverage import PLANNED
-from ._filters import ColumnFilter, FilterContext, RelationshipState, Storage, normalized
+from ._filters import (
+    ColumnFilter,
+    FilterContext,
+    RelationshipState,
+    Storage,
+    bool_series,
+    normalized,
+)
 from .errors import DaxError, NotSupportedError
 from .expr import (
     BinaryOp,
@@ -242,6 +249,22 @@ class FrameRow:
 Row = RowRef | FrameRow
 
 
+class Precomputed:
+    """An argument whose value is already known (SUMMARIZECOLUMNS computes some
+    arguments for all groups at once, then calls the function once per group).
+    It reports the type of the expression it stands for."""
+
+    __slots__ = ("node", "value")
+
+    def __init__(self, node: Any, value: Value) -> None:
+        self.node = node
+        self.value = value
+
+    @property
+    def dax_type(self) -> StaticType:
+        return infer_type(self.node)
+
+
 class _Lazy:
     """A variable's value, evaluated the first time it is used."""
 
@@ -354,6 +377,7 @@ class Evaluator:
         self.model = model
         self.storage = Storage(model)
         self.computing = computing  # the calculated column being computed, if any
+        self._measures: dict[tuple[Any, ...], Value] = {}
 
     # --- entry points ---------------------------------------------------------------
 
@@ -387,12 +411,14 @@ class Evaluator:
             real = self.storage.real_rows(value.table)
             return real if mask is None else mask & real
         if mask is None:
-            return pl.Series([True] * self.storage.ext(value.table).height, dtype=pl.Boolean)
+            return bool_series(self.storage.ext(value.table).height, True)
         return mask
 
     # --- scalars -------------------------------------------------------------------------
 
     def scalar(self, node: Any, ctx: Context) -> Value:
+        if isinstance(node, Precomputed):
+            return node.value
         if isinstance(node, Literal_):
             v = node.value
             if isinstance(v, Decimal):
@@ -405,7 +431,7 @@ class Evaluator:
         if isinstance(node, ColumnName):
             return self._named_value(node, ctx)
         if is_measure(node):
-            return self.scalar(node.expression, self._transition(ctx, keep_env=False))
+            return self._measure(node, ctx)
         if isinstance(node, VarRef):
             return self._variable(node, ctx)
         if isinstance(node, VarBlock):
@@ -420,6 +446,19 @@ class Evaluator:
         if getattr(node, "kind", None) == "table":
             return self._table_as_value(self.table(node, ctx))
         raise TypeError(f"can't evaluate {node!r} as a value")
+
+    def _measure(self, measure: Any, ctx: Context) -> Value:
+        """A measure: its expression after context transition. A measure's value
+        depends only on the filter context it ends up in, so each is computed once per
+        filter context in an evaluation."""
+        inner = self._transition(ctx, keep_env=False)
+        shadow = inner.shadow.signature if inner.shadow is not None else None
+        key = (id(measure), inner.filters.signature, shadow)
+        if key in self._measures:
+            return self._measures[key]
+        value = self.scalar(measure.expression, inner)
+        self._measures[key] = value
+        return value
 
     def _column_value(self, column: Column, ctx: Context) -> Value:
         """A column's value in the innermost row context that has the column."""
@@ -513,6 +552,12 @@ class Evaluator:
 
     # --- function calls ----------------------------------------------------------------
 
+    def scalar_handler(self, name: str) -> Handler:
+        handler = _SCALAR_FUNCTIONS.get(name)
+        if handler is None:
+            raise NotSupportedError(name, PLANNED.get(name))
+        return handler
+
     def _call(self, node: Call, ctx: Context) -> Value:
         name = node.name
         args = node.args
@@ -547,7 +592,7 @@ class Evaluator:
             # A row of a model table filters its expanded table, like a table filter:
             # the related rows on the one side of each relationship are filtered too.
             height = self.storage.ext(row.table).height
-            mask = pl.Series([False] * height).scatter(row.index, True)
+            mask = bool_series(height, False).scatter(row.index, True)
             return [own, *self._expanded_filters(row.table, mask)[1:]]
         # A computed row filters each model column it has (its lineage), table by table.
         by_table: dict[int, list[tuple[Column, Value]]] = {}
@@ -689,6 +734,25 @@ class Evaluator:
         on that table's own columns only (relationships don't narrow them); the tables
         are then combined in every way.
         """
+        tables, combos = self.group_combinations(group, ctx)
+        from ._batch import batch_group_rows
+
+        batched = batch_group_rows(self, tables, combos, named, ctx)
+        if batched is not None:
+            return batched
+        result = []
+        for combo in combos.rows() if combos.width else [()]:
+            inner = self.group_context(tables, group, combo, ctx)
+            results = [self.scalar(expr, inner) for _, expr in named]
+            if any(r is not None for r in results):
+                result.append((combo, results))
+        return result
+
+    def group_combinations(
+        self, group: list[Column], ctx: Context
+    ) -> tuple[list[list[Column]], pl.DataFrame]:
+        """The group-by columns by table, and their existing combinations: one column
+        per group-by column, named by its ``id``, in the order of ``group``."""
         tables: dict[int, list[Column]] = {}
         for col in group:
             tables.setdefault(id(col.table), []).append(col)
@@ -701,28 +765,35 @@ class Evaluator:
                 .rename({c.name: f"{id(c)}" for c in cols})
             )
             combos = values if combos.width == 0 else combos.join(values, how="cross")
-        result = []
-        for combo in combos.rows() if combos.width else [()]:
-            by_column = dict(zip((id(c) for c in group), combo, strict=True))
-            filters = [
-                ColumnFilter(
-                    cols[0].table,
-                    cols,
-                    pl.DataFrame(
-                        [
-                            pl.Series(c.name, [by_column[id(c)]], dtype=c.data_type.polars_dtype)
-                            for c in cols
-                        ]
-                    ),
-                    grouping=True,
-                )
-                for cols in tables.values()
-            ]
-            inner = Context(filters=ctx.filters.apply(filters), env=ctx.env, shadow=ctx.filters)
-            results = [self.scalar(expr, inner) for _, expr in named]
-            if any(r is not None for r in results):
-                result.append((combo, results))
-        return result
+        if combos.width:
+            combos = combos.select([f"{id(c)}" for c in group])
+        return list(tables.values()), combos
+
+    def group_context(
+        self,
+        tables: list[list[Column]],
+        group: list[Column],
+        combo: tuple[Value, ...],
+        ctx: Context,
+    ) -> Context:
+        """The context SUMMARIZECOLUMNS evaluates its expressions in for one combination
+        (values in the order of ``group``)."""
+        by_column = dict(zip((id(c) for c in group), combo, strict=True))
+        filters = [
+            ColumnFilter(
+                cols[0].table,
+                cols,
+                pl.DataFrame(
+                    [
+                        pl.Series(c.name, [by_column[id(c)]], dtype=c.data_type.polars_dtype)
+                        for c in cols
+                    ]
+                ),
+                grouping=True,
+            )
+            for cols in tables
+        ]
+        return Context(filters=ctx.filters.apply(filters), env=ctx.env, shadow=ctx.filters)
 
     # --- CALCULATE -------------------------------------------------------------------
 

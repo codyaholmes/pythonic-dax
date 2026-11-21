@@ -394,7 +394,7 @@ def _with_dates(set_name: str, fiscal: bool) -> Callable[..., Value]:
     """TOTALYTD, TOTALQTD and TOTALMTD: CALCULATE(<expression>, DATESxTD(<dates>),
     <filter>)."""
 
-    def handler(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
+    def as_calculate(args: list[Any]) -> tuple[Any, list[Any]]:
         if fiscal:
             extra, year_end = _filter_and_year_end(args)
         else:
@@ -403,8 +403,23 @@ def _with_dates(set_name: str, fiscal: bool) -> Callable[..., Value]:
         filters: list[Any] = [TableCall(set_name, set_args)]
         if extra is not None:
             filters.append(extra)
-        return ev.scalar(args[0], ev.calculate_context(filters, ctx))
+        return args[0], filters
 
+    return _calculate_like(as_calculate)
+
+
+def _calculate_like(
+    as_calculate: Callable[[list[Any]], tuple[Any, list[Any]]],
+) -> Callable[..., Value]:
+    """A handler for a function that is CALCULATE(<expression>, <filters>...). The
+    handler's ``as_calculate`` gives that form (SUMMARIZECOLUMNS uses it to evaluate
+    every group at once)."""
+
+    def handler(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
+        expression, filters = as_calculate(args)
+        return ev.scalar(expression, ev.calculate_context(filters, ctx))
+
+    handler.as_calculate = as_calculate  # type: ignore[attr-defined]
     return handler
 
 
@@ -413,7 +428,7 @@ def _balance(months: int, closing: bool) -> Callable[..., Value]:
     CLOSINGBALANCExxx: CALCULATE(<expression>, ENDOFxxx(<dates>))."""
     unit = {1: "MONTH", 3: "QUARTER", 12: "YEAR"}[months]
 
-    def handler(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
+    def as_calculate(args: list[Any]) -> tuple[Any, list[Any]]:
         if months == 12:
             extra, year_end = _filter_and_year_end(args)
         else:
@@ -428,9 +443,9 @@ def _balance(months: int, closing: bool) -> Callable[..., Value]:
         filters: list[Any] = [dates]
         if extra is not None:
             filters.append(extra)
-        return ev.scalar(args[0], ev.calculate_context(filters, ctx))
+        return args[0], filters
 
-    return handler
+    return _calculate_like(as_calculate)
 
 
 # --- date tables ------------------------------------------------------------------------

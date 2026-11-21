@@ -1,0 +1,47 @@
+id: group-by-interleaved-tables
+description: >-
+  Group-by columns from two tables in an interleaved order (Product, Date, Product) give
+  every existing combination, with the columns in the order given. The engine used to
+  pair the values with the wrong columns and fail.
+source: documented
+reference: https://learn.microsoft.com/en-us/dax/summarizecolumns-function-dax
+powerbi_version: null
+model:
+  tables:
+    Product:
+      columns: {ProductKey: integer, Category: string, Color: string}
+      rows:
+      - [1, Bikes, Red]
+      - [2, Parts, Blue]
+    Years:
+      columns: {Year: integer}
+      rows:
+      - [2023]
+      - [2024]
+    Sales:
+      columns: {ProductKey: integer, Qty: integer}
+      rows:
+      - [1, 5]
+      - [2, 7]
+  relationships:
+  - from: Sales[ProductKey]
+    to: Product[ProductKey]
+python: |
+  result = model.evaluate(SUMMARIZECOLUMNS(
+      Product["Category"], Years["Year"], Product["Color"], {"Q": SUM(Sales["Qty"])}
+  ))
+dax: |
+  EVALUATE
+      SUMMARIZECOLUMNS(Product[Category], Years[Year], Product[Color], "Q", SUM(Sales[Qty]))
+expected:
+  ordered: false
+  columns:
+    Product[Category]: string
+    Years[Year]: integer
+    Product[Color]: string
+    '[Q]': integer
+  rows:
+  - [Bikes, 2023, Red, 5]
+  - [Bikes, 2024, Red, 5]
+  - [Parts, 2023, Blue, 7]
+  - [Parts, 2024, Blue, 7]

@@ -12,6 +12,7 @@ hidden blank row, so they are visible exactly when that blank row is.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -27,6 +28,24 @@ if TYPE_CHECKING:
     from .objects import Column, Relationship, Table
 
 
+_CONTENT_KEY_ROWS = 256
+
+
+class _Identity:
+    """Hashes and compares an object by identity, keeping it alive."""
+
+    __slots__ = ("obj",)
+
+    def __init__(self, obj: object) -> None:
+        self.obj = obj
+
+    def __hash__(self) -> int:
+        return id(self.obj)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _Identity) and other.obj is self.obj
+
+
 class ColumnFilter:
     """Allowed value combinations for some columns of one table.
 
@@ -34,7 +53,7 @@ class ColumnFilter:
     which is what ISINSCOPE looks for.
     """
 
-    __slots__ = ("columns", "grouping", "table", "values")
+    __slots__ = ("_signature", "columns", "grouping", "table", "values")
 
     def __init__(
         self,
@@ -48,6 +67,28 @@ class ColumnFilter:
         self.columns = tuple(columns)
         self.values = values  # one column per filter column, named like the column
         self.grouping = grouping
+        self._signature: tuple[Any, ...] | None = None
+
+    @property
+    def signature(self) -> tuple[Any, ...]:
+        """A hashable key that is equal for filters allowing the same values.
+
+        Small value lists are compared by content; large ones by identity, holding a
+        reference so the identity stays unique while the key is in use.
+        """
+        if self._signature is None:
+            values: Any
+            if self.values.height <= _CONTENT_KEY_ROWS:
+                values = tuple(self.values.rows())
+            else:
+                values = _Identity(self.values)
+            self._signature = (
+                id(self.table),
+                tuple(id(c) for c in self.columns),
+                self.grouping,
+                values,
+            )
+        return self._signature
 
     def without(self, ids: set[int]) -> ColumnFilter | None:
         """This filter with some columns taken out, or None if none are left."""
@@ -81,7 +122,7 @@ class FilterContext:
     """An immutable set of column filters, plus relationship changes made by
     USERELATIONSHIP and CROSSFILTER."""
 
-    __slots__ = ("filters", "overrides")
+    __slots__ = ("_signature", "filters", "overrides")
 
     def __init__(
         self,
@@ -90,6 +131,18 @@ class FilterContext:
     ) -> None:
         self.filters = filters
         self.overrides = overrides
+        self._signature: tuple[Any, ...] | None = None
+
+    @property
+    def signature(self) -> tuple[Any, ...]:
+        """A hashable key that is equal for filter contexts with the same filters and
+        relationship changes."""
+        if self._signature is None:
+            self._signature = (
+                tuple(f.signature for f in self.filters),
+                tuple((id(r), s) for r, s in self.overrides),
+            )
+        return self._signature
 
     def apply(
         self, new: Iterable[ColumnFilter], keep: Iterable[ColumnFilter] = ()
@@ -138,47 +191,78 @@ def normalized(column: Column, name: str | None = None) -> pl.Expr:
     return expr
 
 
+def bool_series(height: int, value: bool) -> pl.Series:
+    """A True/False series of one value, built without a Python list."""
+    return pl.repeat(value, height, dtype=pl.Boolean, eager=True)
+
+
+class _ModelCache:
+    """Work that depends only on a model's data, kept between evaluations.
+
+    Entries remember the data frames they were built from (frames are immutable, so a
+    reload or a new calculated column replaces them) and are rebuilt when those change.
+    """
+
+    def __init__(self) -> None:
+        self.ext: dict[int, tuple[pl.DataFrame, bool, pl.DataFrame, int | None]] = {}
+        self.maps: dict[int, tuple[Any, pl.Series]] = {}
+        self.text: dict[int, pl.DataFrame] = {}
+        self.keys: dict[int, tuple[Any, ...]] = {}
+        self.rows: OrderedDict[tuple[int, int], tuple[Any, ...]] = OrderedDict()
+
+
+def model_cache(model: Model) -> _ModelCache:
+    cache: _ModelCache | None = getattr(model, "_engine_cache", None)
+    if cache is None:
+        cache = _ModelCache()
+        model._engine_cache = cache  # type: ignore[attr-defined]
+    return cache
+
+
 class Storage:
     """The rows of each table, with the hidden blank row, plus cached visibility.
 
-    One Storage serves one evaluation, so cached results never go stale.
+    One Storage serves one evaluation. Visibility is cached by the content of the
+    filter context, so equal contexts built in different places share the work.
+    Work that depends only on the data (the blank row, relationship lookups, checks)
+    is cached on the model and reused by later evaluations while the data is unchanged.
     """
 
     def __init__(self, model: Model) -> None:
         self.model = model
-        self._ext: dict[int, pl.DataFrame] = {}
-        self._blank: dict[int, int | None] = {}
-        self._visible: dict[tuple[int, int], pl.Series | None] = {}
-        self._keep: list[Any] = []  # keeps cached keys' objects alive
-        self._checked: set[int] = set()
+        self.cache = model_cache(model)
+        self._visible: dict[Any, pl.Series | None] = {}
+        self._masks: dict[Any, pl.Series] = {}
 
     # --- rows ---------------------------------------------------------------------
 
     def ext(self, table: Table) -> pl.DataFrame:
         """The table's rows, followed by the blank row if Power BI would add one."""
+        return self._ext_entry(table)[0]
+
+    def _ext_entry(self, table: Table) -> tuple[pl.DataFrame, int | None]:
         key = id(table)
-        if key not in self._ext:
-            data = table.data
-            if table.has_blank_row:
-                blank = pl.DataFrame(
-                    [pl.Series(c, [None], dtype=data.schema[c]) for c in data.columns]
-                )
-                self._blank[key] = data.height
-                data = pl.concat([data, blank])
-            else:
-                self._blank[key] = None
-            self._ext[key] = data
-        return self._ext[key]
+        data = table.data
+        has_blank = table.has_blank_row
+        hit = self.cache.ext.get(key)
+        if hit is not None and hit[2] is data and hit[1] == has_blank:
+            return hit[0], hit[3]
+        if has_blank:
+            blank = pl.DataFrame([pl.Series(c, [None], dtype=data.schema[c]) for c in data.columns])
+            ext = pl.concat([data, blank], rechunk=False)
+            index: int | None = data.height
+        else:
+            ext, index = data, None
+        self.cache.ext[key] = (ext, has_blank, data, index)
+        return ext, index
 
     def blank_index(self, table: Table) -> int | None:
-        self.ext(table)
-        return self._blank[id(table)]
+        return self._ext_entry(table)[1]
 
     def real_rows(self, table: Table) -> pl.Series:
         """True for every row except the blank row."""
-        ext = self.ext(table)
-        mask = pl.Series([True] * ext.height, dtype=pl.Boolean)
-        index = self.blank_index(table)
+        ext, index = self._ext_entry(table)
+        mask = bool_series(ext.height, True)
         if index is not None:
             mask = mask.scatter(index, False)
         return mask
@@ -189,23 +273,25 @@ class Storage:
         Power BI stores one spelling for such values, and which one it keeps depends on
         load order, so results that show these values could differ.
         """
-        if column.data_type is not DaxType.STRING or id(column) in self._checked:
+        if column.data_type is not DaxType.STRING:
             return
-        values = column.table.data[column.name].drop_nulls().unique()
+        data = column.table.data
+        if self.cache.text.get(id(column)) is data:
+            return
+        values = data[column.name].drop_nulls().unique()
         folded = values.str.to_lowercase().str.strip_chars_end(" ").n_unique()
         if folded != values.len():
             raise NotSupportedError(
                 f"text values in {column.ref} that differ only by case or trailing spaces"
             )
-        self._checked.add(id(column))
+        self.cache.text[id(column)] = data
 
     # --- visibility -----------------------------------------------------------------
 
     def visible(self, table: Table, filters: FilterContext) -> pl.Series | None:
         """A mask over :meth:`ext` rows, or None when nothing filters the table."""
-        key = (id(table), id(filters))
+        key = (id(table), filters.signature)
         if key not in self._visible:
-            self._keep.append(filters)
             self._visible[key] = self._visible_from(table, filters, frozenset(), None)
         return self._visible[key]
 
@@ -217,13 +303,17 @@ class Storage:
     def own_rows(self, table: Table, filters: FilterContext) -> pl.DataFrame:
         """Rows allowed by the filters on the table's own columns, ignoring filters that
         would reach it through relationships (SUMMARIZECOLUMNS group-by values)."""
+        mask = self.own_mask(table, filters)
+        ext = self.ext(table)
+        return ext if mask is None else ext.filter(mask)
+
+    def own_mask(self, table: Table, filters: FilterContext) -> pl.Series | None:
         mask: pl.Series | None = None
         for f in filters.filters:
             if f.table is table:
                 m = self._filter_mask(f)
                 mask = m if mask is None else mask & m
-        ext = self.ext(table)
-        return ext if mask is None else ext.filter(mask)
+        return mask
 
     def blank_row_visible(self, table: Table, filters: FilterContext) -> bool:
         index = self.blank_index(table)
@@ -239,11 +329,7 @@ class Storage:
         path: frozenset[int],
         via: Relationship | None,
     ) -> pl.Series | None:
-        mask: pl.Series | None = None
-        for f in filters.filters:
-            if f.table is table:
-                m = self._filter_mask(f)
-                mask = m if mask is None else mask & m
+        mask = self.own_mask(table, filters)
         for rel in self.model.relationships:
             state = filters.state(rel)
             if not state.active or rel is via:
@@ -276,46 +362,71 @@ class Storage:
         return mask
 
     def _filter_mask(self, f: ColumnFilter) -> pl.Series:
+        key = f.signature
+        hit = self._masks.get(key)
+        if hit is not None:
+            return hit
         ext = self.ext(f.table)
         keys = [f"k{i}" for i in range(len(f.columns))]
-        left = ext.select(
-            [normalized(c).alias(k) for c, k in zip(f.columns, keys, strict=True)]
-        ).with_row_index("__i")
         right = f.values.select(
             [normalized(c).alias(k) for c, k in zip(f.columns, keys, strict=True)]
         )
-        hits = left.join(right, on=keys, how="semi", nulls_equal=True)["__i"]
-        return pl.Series([False] * ext.height, dtype=pl.Boolean).scatter(hits, True)
+        if len(keys) == 1:
+            mask = ext.select(
+                normalized(f.columns[0]).is_in(right["k0"].implode(), nulls_equal=True)
+            ).to_series()
+        else:
+            left = ext.select(
+                [normalized(c).alias(k) for c, k in zip(f.columns, keys, strict=True)]
+            ).with_row_index("__i")
+            hits = left.join(right, on=keys, how="semi", nulls_equal=True)["__i"]
+            mask = bool_series(ext.height, False).scatter(hits, True)
+        self._masks[key] = mask
+        return mask
+
+    def many_to_one(self, rel: Relationship) -> pl.Series:
+        """For each row of the many side (in :meth:`ext` order), the index of its row on
+        the one side: the blank row for keys with no match, or null when the one side
+        has no blank row."""
+        self._check_keys(rel)
+        many, one = rel.from_column, rel.to_column
+        many_data, one_data = many.table.data, one.table.data
+        state = (many_data, one_data, many.table.has_blank_row, one.table.has_blank_row)
+        hit = self.cache.maps.get(id(rel))
+        if hit is not None and all(a is b for a, b in zip(hit[0], state, strict=True)):
+            return hit[1]
+        one_ext = self.ext(one.table)
+        many_ext = self.ext(many.table)
+        one_keys = (
+            one_ext.select(normalized(one).alias("k"))
+            .with_row_index("__j")
+            .filter(self.real_rows(one.table))
+            .drop_nulls("k")
+        )
+        if one_keys["k"].n_unique() != one_keys.height:
+            raise NotSupportedError(f"duplicate keys on the one side of {rel!r}")
+        joined = many_ext.select(normalized(many).alias("k")).join(
+            one_keys, on="k", how="left", maintain_order="left"
+        )
+        index = joined["__j"]
+        blank = self.blank_index(one.table)
+        if blank is not None:
+            index = index.fill_null(blank)
+        self.cache.maps[id(rel)] = (state, index)
+        return index
 
     def _restrict(self, table: Table, rel: Relationship, other_mask: pl.Series) -> pl.Series:
         """Rows of ``table`` allowed by the visible rows of the relationship's other side."""
-        self._check_keys(rel)
-        many, one = rel.from_column, rel.to_column
-        one_ext = self.ext(one.table)
-        many_ext = self.ext(many.table)
-        one_real = self.real_rows(one.table)
-        one_keys = one_ext.select(normalized(one).alias("k"))["k"]
-        many_keys = many_ext.select(normalized(many).alias("k"))["k"]
-        all_one = one_keys.filter(one_real).drop_nulls()
-        unmatched = ~many_keys.is_in(all_one.implode()).fill_null(False)
-
-        if table is many.table:
-            visible_one = one_keys.filter(other_mask & one_real).drop_nulls()
-            mask = many_keys.is_in(visible_one.implode()).fill_null(False)
-            blank = self.blank_index(one.table)
-            if blank is not None and bool(other_mask[blank]):
-                mask = mask | unmatched
-            return mask
-
-        visible_many = many_keys.filter(other_mask)
-        mask = one_keys.is_in(visible_many.drop_nulls().implode()).fill_null(False) & one_real
-        blank = self.blank_index(one.table)
-        if blank is not None and bool((other_mask & unmatched).any()):
-            mask = mask.scatter(blank, True)
-        return mask
+        index = self.many_to_one(rel)
+        if table is rel.from_column.table:
+            return other_mask.gather(index).fill_null(False)
+        hits = index.filter(other_mask).drop_nulls().unique()
+        return bool_series(self.ext(table).height, False).scatter(hits, True)
 
     def _check_keys(self, rel: Relationship) -> None:
-        if id(rel) in self._checked:
+        state = (rel.from_column.table.data, rel.to_column.table.data, rel.cardinality)
+        hit = self.cache.keys.get(id(rel))
+        if hit is not None and hit[0] is state[0] and hit[1] is state[1] and hit[2] is state[2]:
             return
         for col in (rel.from_column, rel.to_column):
             if col.data_type is DaxType.STRING:
@@ -332,7 +443,7 @@ class Storage:
                 raise NotSupportedError(
                     "a one-to-one relationship where both sides have keys the other lacks"
                 )
-        self._checked.add(id(rel))
+        self.cache.keys[id(rel)] = state
 
     # --- filters from rows -------------------------------------------------------------
 
