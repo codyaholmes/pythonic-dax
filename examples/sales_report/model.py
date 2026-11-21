@@ -32,11 +32,42 @@ def calendar(first: dt.date, last: dt.date) -> pl.DataFrame:
     )
 
 
-def build() -> pdax.Model:
+def big_sales(rows: int, seed: int = 20261121) -> pl.DataFrame:
+    """``rows`` made-up order lines with the same columns as data/sales.csv, for trying
+    the engine on large data. Prices come from data/products.csv."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    products = pl.read_csv(DATA / "products.csv")
+    customers = pl.read_csv(DATA / "customers.csv").height
+    pick = rng.integers(0, products.height, rows)
+    discount = rng.choice([0.0, 0.0, 0.0, 0.05, 0.10], rows)
+    days = (dt.date(2024, 12, 31) - dt.date(2023, 1, 1)).days + 1
+    return pl.DataFrame(
+        {
+            "OrderID": np.arange(rows) // 2 + 1001,
+            "OrderDate": pl.Series(
+                np.datetime64("2023-01-01") + rng.integers(0, days, rows).astype("timedelta64[D]")
+            ).cast(pl.Date),
+            "CustomerKey": rng.integers(1, customers + 1, rows),
+            "ProductKey": products["ProductKey"].to_numpy()[pick],
+            "Quantity": rng.integers(1, 7, rows),
+            "UnitPrice": np.round(products["ListPrice"].to_numpy()[pick] * (1 - discount), 2),
+            "UnitCost": products["UnitCost"].to_numpy()[pick],
+        }
+    )
+
+
+def build(rows: int | None = None) -> pdax.Model:
+    """The demo model. With ``rows``, the Sales table is that many made-up order lines
+    (see :func:`big_sales`) instead of data/sales.csv."""
     model = pdax.Model(description="Made-up bike shop sales, 2023 to 2024.")
+    sales_data = (
+        pl.read_csv(DATA / "sales.csv", try_parse_dates=True) if rows is None else big_sales(rows)
+    )
     sales = model.add_table(
         "Sales",
-        pl.read_csv(DATA / "sales.csv", try_parse_dates=True),
+        sales_data,
         description="One row per order line.",
         columns={
             "OrderID": {"display_name": "Order", "summarize_by": "none"},
