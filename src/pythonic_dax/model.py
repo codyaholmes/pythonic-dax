@@ -457,6 +457,46 @@ class Model:
                 raise ModelError(f"{m.ref} belongs to a different model")
         return Evaluator(self).evaluate(node)
 
+    def value(self, expression: Measure | str | Any, *filters: Any) -> Any:
+        """One value, such as a card shows: ``model.value(total, Customer["Tier"] == "Gold")``.
+
+        Runs ``EVALUATE ROW("Value", CALCULATE(<expression>, <filters>...))`` and
+        returns its one value as a plain Python value. ``expression`` is a measure, a
+        measure's name, a scalar expression, or DAX text (``"SUM(Sales[Amount])"``). A
+        name that matches a measure means that measure; any other text is parsed as DAX.
+        ``filters`` are CALCULATE filter arguments: True/False conditions, filter tables
+        and modifiers such as ``ALL(Product)``, as expressions or DAX text.
+
+        The filter context starts empty, as for a card with no slicers. BLANK comes back
+        as None. As in :meth:`evaluate`'s frames, a Whole Number is an ``int``, a
+        Decimal Number a ``float``, a Fixed Decimal Number a ``decimal.Decimal``, a
+        Date/Time a ``datetime.datetime``, Text a ``str`` and True/False a ``bool``.
+        """
+        from ._functions import CALCULATE
+        from ._special import ROW
+
+        node = self._value_argument(expression, "expression")
+        if getattr(node, "kind", None) == "table":
+            raise TypeError(
+                "value() needs a measure or a scalar expression, not a table; "
+                "use evaluate() for a table"
+            )
+        args = [self._value_argument(f, "filter") for f in filters]
+        if args:
+            node = CALCULATE(node, *args)
+        frame = self.evaluate(ROW("Value", node))
+        return frame.item()
+
+    def _value_argument(self, arg: Any, role: str) -> Any:
+        """A value() argument as an expression: text is a measure name or DAX."""
+        if not isinstance(arg, str):
+            return arg
+        if role == "expression":
+            measure = self._measures.get(arg)
+            if measure is not None:
+                return measure
+        return self.parse_dax(arg)
+
     def _dependencies(self, node: Any) -> tuple[list[Measure], list[Column]]:
         """Measures and calculated columns an expression uses, directly or not, in
         model order."""

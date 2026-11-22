@@ -43,6 +43,8 @@ def test_golden_dax_text(case: Case) -> None:
             assert re.search(error["message_matches"], str(exc)), str(exc)
         return
     assert error is None, f"expected {error['type']} but the engine returned a result"
+    if case.expected.scalar:  # a Model.value() case: its query is a one-cell ROW
+        result = result.item()
     problems = compare(result, case.expected)
     assert not problems, "\n".join(problems)
 

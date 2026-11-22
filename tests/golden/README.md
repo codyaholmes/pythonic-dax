@@ -44,6 +44,20 @@ expected:
   error: {type: DaxError, message_matches: "cannot convert"}
 ```
 
+### One value
+
+A case whose code calls `model.value()` assigns that one value to `result`, and expects
+it with its DAX type. The Python type must match too (`int`, `float`, `Decimal`,
+`datetime`, `str` or `bool`). For BLANK, write `value: null` with no type:
+
+```yaml
+python: |
+  result = model.value(total, Customer["Tier"] == "Gold")
+expected:
+  value: 5.125
+  type: currency
+```
+
 ### Date tables
 
 A table can be a generated calendar instead of listing its rows, and can be marked as a
