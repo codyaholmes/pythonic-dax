@@ -101,6 +101,16 @@ model.evaluate(SUMMARIZECOLUMNS(Product["Color"], {"Total": total}))
 # columns "Product[Color]" and "[Total]"; colors with no sales are left out
 ```
 
+For one value, such as a card shows, `model.value()` runs
+`EVALUATE ROW("Value", CALCULATE(<expression>, <filters>...))` and returns the plain
+Python value. BLANK is None, and a Fixed Decimal Number is a `decimal.Decimal`:
+
+```python
+model.value(total)  # the whole model
+model.value(total, Customer["LoyaltyTier"] == "Gold")  # CALCULATE filter arguments
+model.value("Total Sales", 'Customer[LoyaltyTier] = "Gold"')  # a measure name, DAX text
+```
+
 * **Filters across relationships:** from the one side to the many side, and back when a
   relationship filters both ways. Unmatched keys land on the one side's hidden blank row.
 * **Evaluated so far:** `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `COUNTA`, `COUNTBLANK`,

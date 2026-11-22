@@ -55,6 +55,9 @@ class Expected:
     rows: list[list[Any]] = field(default_factory=list)
     ordered: bool = False
     error: dict[str, str] | None = None
+    scalar: bool = False  # the result is one Python value, from Model.value()
+    value: Any = None
+    value_type: str | None = None
 
 
 @dataclass
@@ -124,8 +127,16 @@ def load_case(path: Path) -> Case:
         rows=exp.get("rows") or [],
         ordered=bool(exp.get("ordered", False)),
         error=exp.get("error"),
+        scalar="value" in exp,
+        value=exp.get("value"),
+        value_type=exp.get("type"),
     )
-    if expected.error is None:
+    if expected.scalar:
+        if expected.columns or expected.rows or expected.error:
+            raise CaseFormatError(f"{path.name}: expected has a value and a table or error")
+        if expected.value is not None and expected.value_type not in DAX_TYPES:
+            raise CaseFormatError(f"{path.name}: expected value needs a type, got {exp!r}")
+    elif expected.error is None:
         for col, dax_type in expected.columns.items():
             if dax_type not in DAX_TYPES:
                 raise CaseFormatError(f"{path.name}: expected column {col} has type {dax_type!r}")
@@ -210,8 +221,9 @@ class Run:
     queries: list[str] = field(default_factory=list)
 
 
-def run_case(case: Case, run: Run | None = None) -> pl.DataFrame:
-    """Build the model and run the case's Python code. Returns the ``result`` frame.
+def run_case(case: Case, run: Run | None = None) -> Any:
+    """Build the model and run the case's Python code. Returns ``result``: a frame, or
+    for a case that expects a ``value``, the one value Model.value() returned.
 
     Pass a :class:`Run` to record the DAX of every query the code evaluates.
     """
@@ -234,7 +246,7 @@ def run_case(case: Case, run: Run | None = None) -> pl.DataFrame:
     if "result" not in namespace:
         raise CaseFormatError(f"{case.path.name}: python code must assign `result`")
     result = namespace["result"]
-    if not isinstance(result, pl.DataFrame):
+    if not case.expected.scalar and not isinstance(result, pl.DataFrame):
         raise TypeError(f"result must be a polars DataFrame, got {type(result).__name__}")
     return result
 
@@ -288,8 +300,37 @@ def _values_equal(actual: Any, expected: Any) -> bool:
     return bool(actual == expected)
 
 
-def compare(actual: pl.DataFrame, expected: Expected) -> list[str]:
-    """Return a list of differences between the result and the expected table."""
+# The Python type Model.value() returns for each DAX type.
+PYTHON_TYPES: dict[str, type] = {
+    "integer": int,
+    "decimal": float,
+    "currency": Decimal,
+    "datetime": dt.datetime,
+    "date": dt.datetime,
+    "string": str,
+    "boolean": bool,
+}
+
+
+def compare_value(actual: Any, expected: Expected) -> list[str]:
+    """Differences between one value from Model.value() and the expected value."""
+    if expected.value is None:
+        return [] if actual is None else [f"got {actual!r}, want BLANK (None)"]
+    assert expected.value_type is not None
+    want = _to_python(expected.value, expected.value_type)
+    want_type = PYTHON_TYPES[expected.value_type]
+    if type(actual) is not want_type:
+        return [f"got {actual!r} ({type(actual).__name__}), want a {want_type.__name__}"]
+    if not _values_equal(actual, want):
+        return [f"got {actual!r}, want {want!r}"]
+    return []
+
+
+def compare(actual: Any, expected: Expected) -> list[str]:
+    """Return a list of differences between the result and the expected table (or
+    expected value)."""
+    if expected.scalar:
+        return compare_value(actual, expected)
     problems: list[str] = []
     want_cols = list(expected.columns)
     if actual.columns != want_cols:
