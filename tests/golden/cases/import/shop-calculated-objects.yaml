@@ -1,0 +1,52 @@
+id: import-shop-calculated-objects
+description: >-
+  An imported calculated column with context transition ([Total Sales] per product),
+  summed by color, next to a count of the imported calculated table Dates. Sales of an
+  unknown product (key 4) belong to Product's blank row, which has no calculated value.
+source: powerbi
+reference: >-
+  Power BI Desktop (Shop Test.pbix with the same made-up tables, relationships and
+  date table as tests/fixtures/shop.SemanticModel), query tool
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tmdl: shop.SemanticModel
+  tables:
+    Product:
+      columns: {ProductKey: integer, Color: string, Launch Date: date}
+      rows:
+        - [1, Red, 2023-01-01]
+        - [2, Blue, 2023-01-01]
+        - [3, Red, 2023-01-01]
+    Sales:
+      columns: {ProductKey: integer, Order Date: date, Ship Date: date, Qty: integer, Price: currency}
+      rows:
+        - [1, 2024-01-05, 2024-01-09, 1, 10.0]
+        - [1, 2024-02-05, 2024-03-01, 2, 10.0]
+        - [2, 2024-02-09, 2024-02-10, 3, 5.5]
+        - [3, 2024-03-01, 2024-03-03, 4, 2.25]
+        - [4, 2024-03-02, 2024-03-09, 5, 1.0]
+python: |
+  result = model.evaluate(
+      SUMMARIZECOLUMNS(
+          Product["Color"],
+          "ProductSales", SUM(Product["Product Sales"]),
+          "Days", COUNTROWS(Dates),
+      )
+  )
+dax: |
+  DEFINE
+      COLUMN Sales[Line Total] = Sales[Qty] * Sales[Price]
+      COLUMN Product[Product Sales] = [Total Sales]
+      MEASURE _Measures[Total Sales] = SUM(Sales[Line Total])
+  EVALUATE
+      SUMMARIZECOLUMNS(Product[Color], "ProductSales", SUM(Product[Product Sales]), "Days", COUNTROWS(Dates))
+expected:
+  ordered: false
+  columns:
+    Product[Color]: string
+    '[ProductSales]': currency
+    '[Days]': integer
+  rows:
+    - [Red, 39.0, 91]
+    - [Blue, 16.5, 91]
+    - [null, null, 91]

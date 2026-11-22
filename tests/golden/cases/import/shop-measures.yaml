@@ -1,0 +1,55 @@
+id: import-shop-measures
+description: >-
+  A model imported from TMDL runs its measures: a SUM over a calculated column, a
+  CALCULATE with USERELATIONSHIP on an inactive relationship, and a VAR measure with
+  ALL. The Dates table is a calculated table marked as a date table.
+source: powerbi
+reference: >-
+  Power BI Desktop (Shop Test.pbix with the same made-up tables, relationships and
+  date table as tests/fixtures/shop.SemanticModel), query tool
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tmdl: shop.SemanticModel
+  tables:
+    Product:
+      columns: {ProductKey: integer, Color: string, Launch Date: date}
+      rows:
+        - [1, Red, 2023-01-01]
+        - [2, Blue, 2023-01-01]
+        - [3, Red, 2023-01-01]
+    Sales:
+      columns: {ProductKey: integer, Order Date: date, Ship Date: date, Qty: integer, Price: currency}
+      rows:
+        - [1, 2024-01-05, 2024-01-09, 1, 10.0]
+        - [1, 2024-02-05, 2024-03-01, 2, 10.0]
+        - [2, 2024-02-09, 2024-02-10, 3, 5.5]
+        - [3, 2024-03-01, 2024-03-03, 4, 2.25]
+        - [4, 2024-03-02, 2024-03-09, 5, 1.0]
+python: |
+  result = model.evaluate(
+      SUMMARIZECOLUMNS(
+          Dates["Month"],
+          "Total", model["Total Sales"],
+          "Shipped", model["Shipped Sales"],
+          "RedShare", model["Red Share"],
+      )
+  )
+dax: |
+  DEFINE
+      COLUMN Sales[Line Total] = Sales[Qty] * Sales[Price]
+      MEASURE _Measures[Total Sales] = SUM(Sales[Line Total])
+      MEASURE _Measures[Shipped Sales] = CALCULATE([Total Sales], USERELATIONSHIP(Sales[Ship Date], Dates[Date]))
+      MEASURE _Measures[Red Share] = VAR red = CALCULATE([Total Sales], Product[Color] = "Red") VAR total = CALCULATE([Total Sales], ALL(Product)) RETURN DIVIDE(red, total)
+  EVALUATE
+      SUMMARIZECOLUMNS(Dates[Month], "Total", [Total Sales], "Shipped", [Shipped Sales], "RedShare", [Red Share])
+expected:
+  ordered: false
+  columns:
+    Dates[Month]: string
+    '[Total]': currency
+    '[Shipped]': currency
+    '[RedShare]': decimal
+  rows:
+    - [Jan, 10.0, 10.0, 1.0]
+    - [Feb, 36.5, 16.5, 0.547945205479452]
+    - [Mar, 14.0, 34.0, 0.642857142857143]

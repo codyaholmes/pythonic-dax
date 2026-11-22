@@ -22,6 +22,7 @@ import yaml
 import pythonic_dax as pdax
 
 CASES_DIR = Path(__file__).parent / "cases"
+FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 
 # DAX data types as written in case files, mapped to the Polars dtype that stores them.
 DAX_TYPES: dict[str, pl.DataType] = {
@@ -69,6 +70,7 @@ class Case:
     dax: str | None = None
     reference: str | None = None
     powerbi_version: str | None = None
+    tmdl: str | None = None  # a model imported from tests/fixtures/<tmdl>
 
 
 def parse_column_ref(ref: str) -> tuple[str, str]:
@@ -106,7 +108,12 @@ def load_case(path: Path) -> Case:
             if len(row) != width:
                 raise CaseFormatError(f"{path.name}: row {row!r} in {name} needs {width} values")
 
+    tmdl = model.get("tmdl")
+    if tmdl is not None and not (FIXTURES_DIR / tmdl).is_dir():
+        raise CaseFormatError(f"{path.name}: no TMDL fixture {tmdl!r} in tests/fixtures")
     relationships = model.get("relationships") or []
+    if tmdl is not None and relationships:
+        raise CaseFormatError(f"{path.name}: an imported model has its own relationships")
     for rel in relationships:
         parse_column_ref(rel["from"])
         parse_column_ref(rel["to"])
@@ -138,6 +145,7 @@ def load_case(path: Path) -> Case:
         dax=raw.get("dax"),
         reference=raw.get("reference"),
         powerbi_version=raw.get("powerbi_version"),
+        tmdl=tmdl,
     )
 
 
@@ -207,7 +215,7 @@ def run_case(case: Case, run: Run | None = None) -> pl.DataFrame:
 
     Pass a :class:`Run` to record the DAX of every query the code evaluates.
     """
-    model = pdax.Model()
+    model = new_case_model(case)
     if run is not None:
         run.model = model
         real_evaluate = model.evaluate
@@ -220,7 +228,31 @@ def run_case(case: Case, run: Run | None = None) -> pl.DataFrame:
         model.evaluate = recording_evaluate  # type: ignore[method-assign]
     namespace: dict[str, Any] = {name: getattr(pdax, name) for name in pdax.__all__}
     namespace.update(pdax=pdax, model=model)
+    namespace.update(add_case_tables(case, model))
 
+    exec(compile(case.python, str(case.path), "exec"), namespace)
+    if "result" not in namespace:
+        raise CaseFormatError(f"{case.path.name}: python code must assign `result`")
+    result = namespace["result"]
+    if not isinstance(result, pl.DataFrame):
+        raise TypeError(f"result must be a polars DataFrame, got {type(result).__name__}")
+    return result
+
+
+def new_case_model(case: Case) -> pdax.Model:
+    """An empty model, or for a ``tmdl:`` case the imported model with the case's rows."""
+    if case.tmdl is None:
+        return pdax.Model()
+    data = {name: build_frame(t["columns"], t.get("rows") or []) for name, t in case.tables.items()}
+    return pdax.from_tmdl(FIXTURES_DIR / case.tmdl, data=data)
+
+
+def add_case_tables(case: Case, model: pdax.Model) -> dict[str, Any]:
+    """Add the case's tables and relationships to ``model``. Returns the tables by the
+    names case code sees them under. An imported model already has its tables."""
+    namespace: dict[str, Any] = {}
+    if case.tmdl is not None:
+        return {_identifier(t.name): t for t in model.tables}
     for name, table in case.tables.items():
         frame = build_frame(table["columns"], table.get("rows") or [])
         types = {col: {"data_type": DAX_NAMES[t]} for col, t in table["columns"].items()}
@@ -238,14 +270,7 @@ def run_case(case: Case, run: Run | None = None) -> pl.DataFrame:
             namespace[_identifier(t_table)][t_col],
             **options,
         )
-
-    exec(compile(case.python, str(case.path), "exec"), namespace)
-    if "result" not in namespace:
-        raise CaseFormatError(f"{case.path.name}: python code must assign `result`")
-    result = namespace["result"]
-    if not isinstance(result, pl.DataFrame):
-        raise TypeError(f"result must be a polars DataFrame, got {type(result).__name__}")
-    return result
+    return namespace
 
 
 def normalize_dax(text: str) -> str:

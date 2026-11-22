@@ -1,0 +1,35 @@
+table _Measures
+
+	/// Sum of line totals.
+	measure 'Total Sales' = SUM(Sales[Line Total])
+		formatString: $#,0.00
+		displayFolder: Sales
+
+	measure 'Shipped Sales' =
+			CALCULATE (
+			    [Total Sales],
+			    USERELATIONSHIP ( Sales[Ship Date], Dates[Date] )
+			)
+		formatString: $#,0.00
+		displayFolder: Sales
+
+	measure 'Red Share' =
+			VAR red = CALCULATE ( [Total Sales], Product[Color] = "Red" )
+			VAR total = CALCULATE ( [Total Sales], ALL ( Product ) )
+			RETURN
+			    DIVIDE ( red, total )
+		formatString: 0.0%
+
+	measure 'Median Qty' = PERCENTILE.INC(Sales[Qty], 0.5)
+
+	measure Units = SUM(Sales[Qty])
+		formatString: #,0
+		isHidden
+
+	partition _Measures = m
+		mode: import
+		source =
+				let
+				    Source = Table.FromRows({})
+				in
+				    Source

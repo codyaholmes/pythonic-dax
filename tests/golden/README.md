@@ -62,6 +62,23 @@ The calendar has one row per day, with columns `Date` (date), `Year`, `Quarter`,
 calculated table `ADDCOLUMNS(CALENDAR(<start>, <end>), "Year", YEAR([Date]), "Quarter",
 QUARTER([Date]), "MonthNo", MONTH([Date]), "Month", FORMAT([Date], "yyyy-mm"))`.
 
+### Imported models
+
+A case can run on a model imported from a TMDL folder in `tests/fixtures` instead of
+listing its own tables. `tables` then gives the rows of the model's import tables (by
+model column names), and the model brings its own relationships, measures and
+calculated objects:
+
+```yaml
+model:
+  tmdl: shop.SemanticModel
+  tables:
+    Product:
+      columns: {ProductKey: integer, Color: string, Launch Date: date}
+      rows:
+        - [1, Red, 2023-01-01]
+```
+
 ### Types
 
 | Case type | DAX type | Polars dtype |

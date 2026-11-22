@@ -1,0 +1,17 @@
+cultureInfo es-ES
+
+	translations
+		model Model
+			table Product
+				translatedCaption: Producto
+
+				column Color
+					translatedCaption: Color del producto
+
+			table _Measures
+				measure 'Total Sales'
+					translatedCaption: Ventas totales
+
+			table Dates
+				hierarchy Calendar
+					translatedCaption: Calendario

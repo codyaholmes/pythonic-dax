@@ -1,0 +1,17 @@
+relationship 0a1b2c3d-0000-0000-0000-000000000001
+	fromColumn: Sales.ProductKey
+	toColumn: Product.ProductKey
+
+relationship 0a1b2c3d-0000-0000-0000-000000000002
+	fromColumn: Sales.'Order Date'
+	toColumn: Dates.Date
+
+relationship 0a1b2c3d-0000-0000-0000-000000000003
+	isActive: false
+	fromColumn: Sales.'Ship Date'
+	toColumn: Dates.Date
+
+relationship 0a1b2c3d-0000-0000-0000-000000000004
+	joinOnDateBehavior: datePartOnly
+	fromColumn: Product.'Launch Date'
+	toColumn: LocalDateTable_8f3a1c2e-1111-2222-3333-444455556666.Date

@@ -1,0 +1,51 @@
+/// One row per product.
+table Product
+	lineageTag: 6a7b1c2d-aaaa-bbbb-cccc-000000000001
+
+	/// The product's key.
+	column ProductKey
+		dataType: int64
+		isHidden
+		isKey
+		formatString: 0
+		lineageTag: 6a7b1c2d-aaaa-bbbb-cccc-000000000002
+		summarizeBy: none
+		sourceColumn: product_key
+
+		annotation SummarizationSetBy = Automatic
+
+	column Color
+		dataType: string
+		lineageTag: 6a7b1c2d-aaaa-bbbb-cccc-000000000003
+		summarizeBy: none
+		sourceColumn: color
+
+	column 'Launch Date'
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: 6a7b1c2d-aaaa-bbbb-cccc-000000000004
+		summarizeBy: none
+		sourceColumn: launch_date
+
+		variation Variation
+			isDefault
+			relationship: 0a1b2c3d-0000-0000-0000-000000000004
+			defaultHierarchy: LocalDateTable_8f3a1c2e-1111-2222-3333-444455556666.'Date Hierarchy'
+
+		annotation SummarizationSetBy = Automatic
+
+	/// Sales of the product, whatever the filters on other products.
+	column 'Product Sales' = [Total Sales]
+		formatString: $#,0.00
+		lineageTag: 6a7b1c2d-aaaa-bbbb-cccc-000000000005
+		summarizeBy: sum
+
+	partition Product = m
+		mode: import
+		source =
+				let
+				    Source = Parquet.Document(File.Contents("C:\data\product.parquet"))
+				in
+				    Source
+
+	annotation PBI_ResultType = Table
