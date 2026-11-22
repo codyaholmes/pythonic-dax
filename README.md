@@ -279,18 +279,18 @@ pst.table(report, [Product["Product"]], [model["Sales Amount"], model["Margin %"
 ```python
 from pythonic_dax.sources import Database, Parquet
 
-model = pdax.from_tmdl(               # or pdax.from_bim("model.bim", ...)
-    "Sales.SemanticModel",            # a Power BI project's semantic model folder
+model = pdax.from_tmdl(  # or pdax.from_bim("model.bim", ...)
+    "Sales.SemanticModel",  # a Power BI project's semantic model folder
     data={
         "Sales": Parquet("data/sales/*.parquet"),
         "Product": Database("SELECT * FROM dim_product", connection),
     },
-    culture="es-ES",                  # optional: translated captions become display names
+    culture="es-ES",  # optional: translated captions become display names
 )
-model["Sales Amount"].expression.to_dax()   # the measure, parsed from the model's DAX
+model["Sales Amount"].expression.to_dax()  # the measure, parsed from the model's DAX
 
 model.parse_dax("CALCULATE([Sales Amount], ALL(Product))")  # DAX text to an expression
-model.evaluate_dax("EVALUATE SUMMARIZECOLUMNS(Product[Color], \"Sales\", [Sales Amount])")
+model.evaluate_dax('EVALUATE SUMMARIZECOLUMNS(Product[Color], "Sales", [Sales Amount])')
 ```
 
 * **What's imported:** tables and column types, relationships (active and inactive,
