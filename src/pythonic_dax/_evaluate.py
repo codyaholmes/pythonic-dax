@@ -490,10 +490,8 @@ class Evaluator:
                 if i is not None:
                     return row.frame.rows[row.index][i]
             elif node.name in row.table:
-                raise NotSupportedError(
-                    f"the unqualified column reference [{node.name}] to a model column "
-                    f"(write it as {row.table.ref}[{node.name}])"
-                )
+                # [Qty] in SUMX(Sales, [Qty]) is the row's Sales[Qty], as in Power BI.
+                return self._column_value(row.table[node.name], ctx)
         raise DaxError(
             f"Column '{node.name}' cannot be found or may not be used in this expression."
         )

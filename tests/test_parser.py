@@ -62,7 +62,8 @@ def test_syntax_errors_say_where() -> None:
     [
         ("1 + 2 * 3", 7),
         ("(1 + 2) * 3", 9),
-        ("2 ^ 3 ^ 2", 64.0),  # left to right
+        ("2 ^ 3 ^ 2", 512.0),  # right to left, as in Power BI
+        ("(2 ^ 3) ^ 2", 64.0),
         ("-2 ^ 2", -4.0),  # ^ binds tighter than the sign
         ("2 ^ -1", 0.5),
         ('"a" & 1 + 2', "a3"),  # & is below + and -
@@ -143,9 +144,11 @@ def test_calculated_column_names_its_own_columns(model: pdax.Model) -> None:
     assert col.values.to_list() == [20.0, 10.0, 5.0, 2.0]
 
 
-def test_unqualified_model_column_in_a_measure_is_refused(model: pdax.Model) -> None:
-    with pytest.raises(NotSupportedError, match=r"unqualified column reference \[Amount\]"):
-        value(model, "SUMX('Sales Order', [Amount])")
+def test_unqualified_column_reads_the_row_context(model: pdax.Model) -> None:
+    # Checked in Power BI Desktop: SUMX(Sales, [Qty]) sums Sales[Qty].
+    assert value(model, "SUMX('Sales Order', [Amount] * 2)") == 37.0
+    with pytest.raises(DaxError, match="cannot be found"):
+        value(model, "[Amount] + 1")  # no row context
 
 
 def test_names_of_table_expression_columns(model: pdax.Model) -> None:

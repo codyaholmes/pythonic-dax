@@ -385,9 +385,11 @@ class BinaryOp(Expr):
         prec = _BINARY_PREC[self.op]
         left, lp = self.left._dax()
         right, rp = self.right._dax()
-        if lp < prec:
+        # DAX's ^ groups to the right (2 ^ 3 ^ 2 is 512); the others group to the left.
+        right_assoc = self.op == "^"
+        if lp < prec or (right_assoc and lp == prec):
             left = f"({left})"
-        if rp <= prec:
+        if rp < prec or (not right_assoc and rp == prec):
             right = f"({right})"
         return f"{left} {self.op} {right}", prec
 

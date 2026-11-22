@@ -302,18 +302,19 @@ class _Parser:
         return self.power()
 
     def power(self) -> Ast:
+        # ^ groups to the right in DAX: 2 ^ 3 ^ 2 is 2 ^ 9 (checked in Power BI Desktop).
         left = self.primary()
-        while self.at_op("^"):
+        if self.at_op("^"):
             tok = self.next()
-            right = self.signed_primary()
-            left = Ast("binop", tok.pos, "^", [left, right])
+            right = self.signed_power()
+            return Ast("binop", tok.pos, "^", [left, right])
         return left
 
-    def signed_primary(self) -> Ast:
+    def signed_power(self) -> Ast:
         if self.at_op("-", "+"):
             tok = self.next()
-            return Ast("unop", tok.pos, tok.text, [self.signed_primary()])
-        return self.primary()
+            return Ast("unop", tok.pos, tok.text, [self.signed_power()])
+        return self.power()
 
     def primary(self) -> Ast:
         tok = self.tok

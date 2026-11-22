@@ -3,11 +3,11 @@ description: >-
   A model imported from TMDL runs its measures: a SUM over a calculated column, a
   CALCULATE with USERELATIONSHIP on an inactive relationship, and a VAR measure with
   ALL. The Dates table is a calculated table marked as a date table.
-source: documented
+source: powerbi
 reference: >-
-  tests/fixtures/shop.SemanticModel (made-up model); answers worked out by hand from the
-  rows below, to be captured in Power BI Desktop
-powerbi_version: null
+  Power BI Desktop (Shop Test.pbix with the same made-up tables, relationships and
+  date table as tests/fixtures/shop.SemanticModel), query tool
+powerbi_version: Analysis Services engine 17.0.93.23
 model:
   tmdl: shop.SemanticModel
   tables:
