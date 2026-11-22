@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from . import sources
 from ._coverage import PLANNED
+from ._display import streamlit_format, streamlit_values
 from ._functions import *  # noqa: F403
 from ._functions import __all__ as _function_names
 from ._special import *  # noqa: F403
@@ -90,6 +91,8 @@ __all__ = [
     "from_bim",
     "from_tmdl",
     "sources",
+    "streamlit_format",
+    "streamlit_values",
     *_function_names,
     *_special_names,
     *_KEYWORD_NAMES,

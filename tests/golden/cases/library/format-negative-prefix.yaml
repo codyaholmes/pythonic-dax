@@ -1,0 +1,34 @@
+id: library-format-negative-prefix
+description: >-
+  FORMAT puts the minus sign of a negative number before any text that comes before the
+  digits, when the format has no negative section: FORMAT(-5, "$#,0") is "-$5", not "$-5".
+  The same holds for an escaped \$.
+source: powerbi
+reference: Power BI Desktop, query tool (Test Landing.pbix), no table data needed
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Customer:
+      columns:
+        CustomerKey: integer
+      rows:
+      - [1]
+  relationships: []
+python: |
+  from pythonic_dax.expr import coerce as c
+  result = model.evaluate(ROW(
+      'PrefNeg', FORMAT(c(-5), '$#,0'),
+      'PrefNegDec', FORMAT(c(-1234.5), '$#,##0.00'),
+      'EscCur', FORMAT(c(-42.5), '\\$#,0.00'),
+  ))
+dax: |
+  EVALUATE
+      ROW("PrefNeg", FORMAT(-5, "$#,0"), "PrefNegDec", FORMAT(-1234.5, "$#,##0.00"), "EscCur", FORMAT(-42.5, "\$#,0.00"))
+expected:
+  ordered: false
+  columns:
+    '[PrefNeg]': string
+    '[PrefNegDec]': string
+    '[EscCur]': string
+  rows:
+  - ['-$5', '-$1,234.50', '-$42.50']

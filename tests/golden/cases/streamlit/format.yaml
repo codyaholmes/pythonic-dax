@@ -1,0 +1,119 @@
+id: streamlit-format
+description: >-
+  What Streamlit shows with streamlit_format() and streamlit_values() is exactly what
+  Power BI's FORMAT shows: percent and thousands scaling, half-away-from-zero rounding at
+  ties the browser would round down (1.005 to 1.01), negatives that round to zero (no
+  minus sign), matching negative and zero sections, named formats, and date tokens. The
+  Python code renders the Streamlit text with copies of Streamlit's printf and moment.js
+  formatting, which tests/test_display.py checks against Streamlit itself.
+source: powerbi
+reference: Power BI Desktop, query tool (Test Landing.pbix), no table data needed; Streamlit 1.67.0
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Customer:
+      columns:
+        CustomerKey: integer
+      rows:
+      - [1]
+  relationships: []
+python: |
+  import datetime as dt
+  import polars as pl
+  from pythonic_dax.expr import coerce as c
+  from pythonic_dax._display import render_moment, render_printf
+
+  numbers = [  # name, value, DAX format, nonnegative
+      ('PctNeg', -0.256, '0.0%', False),
+      ('PctTie', 0.0125, '0.0%', False),
+      ('PctTieNeg', -0.0125, '0.0%', False),
+      ('Tie2', 1.005, '#,0.00', False),
+      ('Tie3', 12.345, '#,##0.00', False),
+      ('NegZero', -0.004, '0.00', False),
+      ('NegZero0', -0.4, '#,0', False),
+      ('Thou', 1234567.891, '#,##0.00', False),
+      ('K', 1234567, '#,0,"K"', False),
+      ('MNeg', -1234567, '#,0.0,,"M"', False),
+      ('PbiPct', -0.12345, '0.00%;-0.00%;0.00%', False),
+      ('Sect', -5.5, '#,0.0;-#,0.0', False),
+      ('Zero3', 0, '#,0.00;-#,0.00;#,0.00', False),
+      ('Suffix', 42, '0" units"', False),
+      ('Fixed', 1234.567, 'Fixed', False),
+      ('Std', -1234.567, 'Standard', False),
+      ('Pct', 0.1234, 'Percent', False),
+      ('CurPos', 1234.5, 'Currency', True),
+      ('Big', 123456789012.345, '#,0.00', False),
+  ]
+  dates = [  # name, (DAX expression, Python value), DAX format
+      ('Ymd', 'd', 'yyyy-mm-dd'),
+      ('MmmY', 'd', 'mmm yyyy'),
+      ('LongDate', 'd', 'Long Date'),
+      ('ShortDate', 'd', 'Short Date'),
+      ('Qtr', 'aug', '"Q"q yyyy'),
+      ('AmPm', 'pm', 'h:nn AM/PM'),
+      ('AmPmLow', 'am', 'hh:nn am/pm'),
+      ('HMm', 'pm', 'hh:mm'),
+      ('Dddd', 'd', 'dddd, d mmmm'),
+      ('Ddmmyy', 'd', 'dd/mm/yy'),
+  ]
+  moments = {
+      'd': (DATE(c(2024), c(3), c(5)), dt.datetime(2024, 3, 5)),
+      'aug': (DATE(c(2024), c(8), c(5)), dt.datetime(2024, 8, 5)),
+      'pm': (DATE(c(2024), c(3), c(5)) + TIME(c(13), c(4), c(5)), dt.datetime(2024, 3, 5, 13, 4, 5)),
+      'am': (DATE(c(2024), c(3), c(5)) + TIME(c(9), c(5), c(0)), dt.datetime(2024, 3, 5, 9, 5)),
+  }
+
+  # The query Power BI ran: FORMAT of each value.
+  args = []
+  for name, value, fmt, _ in numbers:
+      args += [name, FORMAT(c(value), fmt)]
+  for name, key, fmt in dates:
+      args += [name, FORMAT(moments[key][0], fmt)]
+  model.evaluate(ROW(*args))
+
+  # What Streamlit shows for the same values with the converted formats.
+  shown = {}
+  for name, value, fmt, nonnegative in numbers:
+      printf = streamlit_format(fmt, nonnegative=nonnegative)
+      shown[f'[{name}]'] = [render_printf(printf, streamlit_values(value, fmt, nonnegative=nonnegative))]
+  for name, key, fmt in dates:
+      when = streamlit_values(moments[key][1], fmt)
+      shown[f'[{name}]'] = [render_moment(streamlit_format(fmt), when)]
+  result = pl.DataFrame(shown)
+dax: |
+  EVALUATE
+      ROW("PctNeg", FORMAT(-0.256, "0.0%"), "PctTie", FORMAT(0.0125, "0.0%"), "PctTieNeg", FORMAT(-0.0125, "0.0%"), "Tie2", FORMAT(1.005, "#,0.00"), "Tie3", FORMAT(12.345, "#,##0.00"), "NegZero", FORMAT(-0.004, "0.00"), "NegZero0", FORMAT(-0.4, "#,0"), "Thou", FORMAT(1234567.891, "#,##0.00"), "K", FORMAT(1234567, "#,0,""K"""), "MNeg", FORMAT(-1234567, "#,0.0,,""M"""), "PbiPct", FORMAT(-0.12345, "0.00%;-0.00%;0.00%"), "Sect", FORMAT(-5.5, "#,0.0;-#,0.0"), "Zero3", FORMAT(0, "#,0.00;-#,0.00;#,0.00"), "Suffix", FORMAT(42, "0"" units"""), "Fixed", FORMAT(1234.567, "Fixed"), "Std", FORMAT(-1234.567, "Standard"), "Pct", FORMAT(0.1234, "Percent"), "CurPos", FORMAT(1234.5, "Currency"), "Big", FORMAT(123456789012.345, "#,0.00"), "Ymd", FORMAT(DATE(2024, 3, 5), "yyyy-mm-dd"), "MmmY", FORMAT(DATE(2024, 3, 5), "mmm yyyy"), "LongDate", FORMAT(DATE(2024, 3, 5), "Long Date"), "ShortDate", FORMAT(DATE(2024, 3, 5), "Short Date"), "Qtr", FORMAT(DATE(2024, 8, 5), """Q""q yyyy"), "AmPm", FORMAT(DATE(2024, 3, 5) + TIME(13, 4, 5), "h:nn AM/PM"), "AmPmLow", FORMAT(DATE(2024, 3, 5) + TIME(9, 5, 0), "hh:nn am/pm"), "HMm", FORMAT(DATE(2024, 3, 5) + TIME(13, 4, 5), "hh:mm"), "Dddd", FORMAT(DATE(2024, 3, 5), "dddd, d mmmm"), "Ddmmyy", FORMAT(DATE(2024, 3, 5), "dd/mm/yy"))
+expected:
+  ordered: false
+  columns:
+    '[PctNeg]': string
+    '[PctTie]': string
+    '[PctTieNeg]': string
+    '[Tie2]': string
+    '[Tie3]': string
+    '[NegZero]': string
+    '[NegZero0]': string
+    '[Thou]': string
+    '[K]': string
+    '[MNeg]': string
+    '[PbiPct]': string
+    '[Sect]': string
+    '[Zero3]': string
+    '[Suffix]': string
+    '[Fixed]': string
+    '[Std]': string
+    '[Pct]': string
+    '[CurPos]': string
+    '[Big]': string
+    '[Ymd]': string
+    '[MmmY]': string
+    '[LongDate]': string
+    '[ShortDate]': string
+    '[Qtr]': string
+    '[AmPm]': string
+    '[AmPmLow]': string
+    '[HMm]': string
+    '[Dddd]': string
+    '[Ddmmyy]': string
+  rows:
+  - ['-25.6%', '1.3%', '-1.3%', '1.01', '12.35', '0.00', '0', '1,234,567.89', '1,235K', '-1,234,567.0M', '-12.35%', '-5.5', '0.00', '42 units', '1234.57', '-1,234.57', '12.34%', '$1,234.50', '123,456,789,012.35', '2024-03-05', 'Mar 2024', 'Tuesday, March 5, 2024', '3/5/2024', 'Q3 2024', '1:04 PM', '09:05 am', '13:04', 'Tuesday, 5 March', '05/03/24']

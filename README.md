@@ -323,6 +323,31 @@ model.evaluate_dax('EVALUATE SUMMARIZECOLUMNS(Product[Color], "Sales", [Sales Am
   DAX, and `skip_tables=` leaves tables out. Roles and perspectives are read but not
   applied, and the hidden automatic date tables are left out.
 
+**Format strings for Streamlit.** `streamlit_format` turns a DAX format string into the
+format string Streamlit takes, and `streamlit_values` prepares the values so Streamlit
+shows exactly the text Power BI shows. Neither imports Streamlit or draws anything:
+
+```python
+fmt = model["Margin"].format_string  # "0.0%"
+pdax.streamlit_format(fmt)  # "%.1f%%", for st.metric or NumberColumn(format=...)
+pdax.streamlit_values(0.256, fmt)  # 25.6, so Streamlit shows "25.6%" like Power BI
+pdax.streamlit_format("mmm yyyy")  # "MMM YYYY", for DateColumn(format=...)
+```
+
+* **Numbers** become printf strings (`"#,0.00"` gives `"%,.2f"`) and **dates** become
+  moment.js strings, the two syntaxes Streamlit's `st.metric` and `st.column_config`
+  columns use.
+* **Always pass values through `streamlit_values`** with the same format string. Printf
+  can't scale (`%` multiplies by 100, a trailing comma divides by 1,000), and the
+  browser rounds `1.005` to `1.00` and shows `-0.00`, where Power BI shows `1.01` and
+  `0.00`. It returns floats, a polars Series for a Series, and checks every value
+  against `FORMAT`, raising `NotSupportedError` if Streamlit would show something else.
+* **Refused rather than guessed:** optional digits (`0.##`), scientific notation, zero
+  padding, General Number and General Date, text-only or differing zero sections, and
+  negatives shown other than `-` right before the digits: `0;(0)`, the named Currency
+  format, and text before the number like `"$#,0"` (Power BI shows `-$5`, Streamlit
+  `$-5`). For values that are never negative, `nonnegative=True` converts those.
+
 Every planned DAX function is now evaluated. Anything the engine can't reproduce
 exactly raises `NotSupportedError`. It never guesses at an answer that might differ
 from Power BI.
