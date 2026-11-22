@@ -2,9 +2,9 @@ id: value-dax-text
 description: >-
   model.value() takes a measure by name and filters as DAX text, and builds the same query as the Python
   functions. KEEPFILTERS intersects with the other filter.
-source: documented
-reference: https://dax.guide/row/
-powerbi_version: null
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data (tables VCustomer and VSales in Test Landing, since Customer and Sales there hold other cases' rows)
+powerbi_version: Analysis Services engine 17.0.93.23
 model:
   tables:
     Customer:

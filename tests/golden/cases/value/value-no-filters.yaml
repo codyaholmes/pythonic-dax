@@ -2,9 +2,9 @@ id: value-no-filters
 description: >-
   With no filters, model.value() is the expression over the whole model, and a Whole Number comes back as
   an int. COUNTROWS counts the sales with unmatched keys too.
-source: documented
-reference: https://dax.guide/row/
-powerbi_version: null
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data (tables VCustomer and VSales in Test Landing, since Customer and Sales there hold other cases' rows)
+powerbi_version: Analysis Services engine 17.0.93.23
 model:
   tables:
     Customer:
