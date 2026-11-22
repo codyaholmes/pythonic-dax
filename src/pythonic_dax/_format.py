@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 import re
+from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
@@ -212,15 +213,26 @@ def _format_decimal(number: Decimal, fmt: str) -> str:
 _LITERAL_CODES = set("$-+()/: ")
 
 
-def _apply_number(number: Decimal, tokens: list[tuple[str, str]]) -> str:
+@dataclass(frozen=True)
+class NumberSection:
+    """One section of a custom number format, split around its digit pattern."""
+
+    prefix: str  # text before the first digit placeholder
+    pattern: str  # the placeholders, separators and point, such as "#,##0.00"
+    exponent: tuple[str, int] | None  # ("+" or "-", exponent digits) for E+00 formats
+    suffix: str  # text after the pattern (and the exponent)
+    percent: int  # how many % signs (each multiplies by 100)
+
+
+def number_section(tokens: list[tuple[str, str]]) -> NumberSection | None:
+    """The parts of a number format section. None when the section is literal text only."""
     codes = [t for kind, t in tokens if kind == "code"]
     if not any(c in "0#" for c in codes):
         # No digit placeholders: the section is all literal text.
         if any(c not in _LITERAL_CODES for c in codes):
             raise NotSupportedError("a number format without digit placeholders")
-        return "".join(t for _, t in tokens)
+        return None
     percent = codes.count("%")
-    number *= Decimal(100) ** percent
     # Find the number pattern: from the first to the last digit placeholder, plus
     # separators inside it and scientific notation after it.
     first = next(i for i, (k, t) in enumerate(tokens) if k == "code" and t in "0#")
@@ -254,10 +266,21 @@ def _apply_number(number: Decimal, tokens: list[tuple[str, str]]) -> str:
     for kind, t in tokens[:first] + tail:
         if kind == "code" and t not in _LITERAL_CODES and t != "%":
             raise NotSupportedError(f"the character {t!r} in a number format")
-    body = _digits(number, pattern, exponent)
     prefix = "".join(t for _, t in tokens[:first])
     suffix = "".join(t for _, t in tail)
-    return prefix + body + suffix
+    return NumberSection(prefix, pattern, exponent, suffix, percent)
+
+
+def _apply_number(number: Decimal, tokens: list[tuple[str, str]]) -> str:
+    section = number_section(tokens)
+    if section is None:
+        return "".join(t for _, t in tokens)
+    number *= Decimal(100) ** section.percent
+    body = _digits(number, section.pattern, section.exponent)
+    if body.startswith("-"):
+        # The minus sign goes before any text: FORMAT(-5, "$#,0") is "-$5".
+        return "-" + section.prefix + body[1:] + section.suffix
+    return section.prefix + body + section.suffix
 
 
 def _digits(number: Decimal, pattern: str, exponent: tuple[str, int] | None) -> str:
@@ -319,8 +342,9 @@ _DATE_TOKEN = re.compile(
 )
 
 
-def _format_date(value: dt.datetime, fmt: str) -> str:
-    out: list[str] = []
+def date_tokens(fmt: str) -> tuple[list[tuple[str, str]], bool]:
+    """A date format as ("lit", text) and ("tok", code) pieces, and whether it shows a
+    12-hour clock (has AM/PM)."""
     pieces: list[tuple[str, str]] = []
     for kind, text in _tokens(fmt):
         if kind == "lit":
@@ -348,6 +372,12 @@ def _format_date(value: dt.datetime, fmt: str) -> str:
             if ch not in " /-:,.":
                 raise NotSupportedError(f"the character {ch!r} in a date format")
             tokens.append(("lit", ch))
+    return tokens, twelve
+
+
+def _format_date(value: dt.datetime, fmt: str) -> str:
+    out: list[str] = []
+    tokens, twelve = date_tokens(fmt)
     for i, (kind, text) in enumerate(tokens):
         if kind == "lit":
             out.append(text)
