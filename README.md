@@ -21,6 +21,15 @@ share = model.add_measure("Share", DIVIDE(total, CALCULATE(total, ALL(Product)))
 model.evaluate(SUMMARIZECOLUMNS(Product["Color"], {"Total": total, "Share": share}))
 ```
 
+## Guides
+
+* [Building a model](docs/building-a-model.md): tables and their sources, column
+  metadata, data types, relationships, the date table, calculated columns, measures,
+  operators and `VAR`, queries, DAX text, importing a Power BI model and `describe()`.
+* [Using a model with Streamlit](docs/streamlit.md): building the model once, slicers
+  as filters, preparing query results for charts and tables, and formatting values as
+  Power BI does.
+
 ## Status
 
 **Phase 1 (data model) is done.** You can build a model the way Power BI's semantic model works:
