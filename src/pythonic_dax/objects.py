@@ -8,6 +8,7 @@ additions: Power BI has no single model-wide property for either.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -198,7 +199,9 @@ class Table(_Metadata, TableExpr):
         self.is_hidden = False
         self.annotations: dict[str, str] = {}
         self.date_column: Column | None = None
+        self.expression: Any = None  # the DAX table expression of a calculated table
         self._columns: NameMap[Column] = NameMap("column")
+        self._hierarchies: NameMap[Hierarchy] = NameMap("hierarchy")
         self._data = pl.DataFrame()
 
     # --- data ---------------------------------------------------------------
@@ -247,6 +250,63 @@ class Table(_Metadata, TableExpr):
     @property
     def is_date_table(self) -> bool:
         return self.date_column is not None
+
+    @property
+    def is_calculated(self) -> bool:
+        """Whether this is a calculated table (see :meth:`Model.add_calculated_table`)."""
+        return self.expression is not None
+
+    # --- hierarchies --------------------------------------------------------
+
+    def add_hierarchy(
+        self,
+        name: str,
+        levels: Sequence[Column | str | tuple[str, Column | str]],
+        *,
+        description: str | None = None,
+        display_name: str | None = None,
+        display_folder: str | None = None,
+        is_hidden: bool = False,
+        annotations: dict[str, str] | None = None,
+    ) -> Hierarchy:
+        """Add a hierarchy, such as Year > Quarter > Month, for a report's drill-down.
+
+        Each level is a column of this table, or a ``(level name, column)`` pair. As in
+        Power BI, a hierarchy is metadata only: DAX never refers to it.
+        """
+        if name in self._hierarchies:
+            raise ModelError(f"{self.ref} already has a hierarchy named {name!r}")
+        if not levels:
+            raise ModelError(f"hierarchy {name!r} needs at least one level")
+        built: list[Level] = []
+        seen: set[int] = set()
+        for i, item in enumerate(levels):
+            level_name, col = item if isinstance(item, tuple) else (None, item)
+            column = self[col] if isinstance(col, str) else col
+            if column.table is not self:
+                raise ModelError(f"{column.ref} is not a column of {self.ref}")
+            if id(column) in seen:
+                raise ModelError(f"hierarchy {name!r} uses {column.ref} twice")
+            seen.add(id(column))
+            built.append(Level(level_name or column.name, column, i))
+        hierarchy = Hierarchy(self, name, built)
+        hierarchy.set(
+            description=description,
+            display_name=display_name,
+            display_folder=display_folder,
+            is_hidden=is_hidden,
+            annotations=dict(annotations or {}),
+        )
+        self._hierarchies.add(name, hierarchy)
+        return hierarchy
+
+    @property
+    def hierarchies(self) -> list[Hierarchy]:
+        return list(self._hierarchies)
+
+    def hierarchy(self, name: str) -> Hierarchy:
+        """Look up a hierarchy by name, ignoring case."""
+        return self._hierarchies[name]
 
     # --- column access ------------------------------------------------------
 
@@ -319,6 +379,51 @@ class Table(_Metadata, TableExpr):
             if existing is None:
                 self._columns.add(col_name, Column(self, col_name, dax_type))
         self._data = pl.DataFrame(series)
+
+
+class Level:
+    """One level of a hierarchy: a name, its column and its position (0 is the top)."""
+
+    def __init__(self, name: str, column: Column, ordinal: int) -> None:
+        self.name = name
+        self.column = column
+        self.ordinal = ordinal
+
+    def __repr__(self) -> str:
+        return f"Level({self.name!r}, {self.column.ref})"
+
+
+class Hierarchy(_Metadata):
+    """A user hierarchy of a table, such as Year > Quarter > Month.
+
+    Metadata for reports (drill-down, field pickers). DAX never refers to hierarchies.
+    """
+
+    _settable = frozenset(
+        {"description", "display_name", "display_folder", "is_hidden", "annotations"}
+    )
+
+    def __init__(self, table: Table, name: str, levels: list[Level]) -> None:
+        self.table = table
+        self.name = name
+        self.levels = levels
+        self.description: str | None = None
+        self._display_name: str | None = None
+        self.display_folder: str | None = None
+        self.is_hidden = False
+        self.annotations: dict[str, str] = {}
+
+    def set(self, **props: Any) -> Hierarchy:
+        self._apply(props)
+        return self
+
+    @property
+    def columns(self) -> list[Column]:
+        return [level.column for level in self.levels]
+
+    def __repr__(self) -> str:
+        path = " > ".join(level.name for level in self.levels)
+        return f"Hierarchy({self.table.ref} {self.name!r}: {path})"
 
 
 class Measure(_Metadata, Expr):

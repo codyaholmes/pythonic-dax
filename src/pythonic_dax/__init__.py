@@ -18,11 +18,14 @@ from ._special import *  # noqa: F403
 from ._special import __all__ as _special_names
 from .errors import DaxError, ModelError, NotSupportedError
 from .expr import VAR, Expr, Keyword, ModifierExpr, TableExpr
+from .importing import from_bim, from_tmdl
 from .model import Model
 from .objects import (
     Cardinality,
     Column,
     CrossFilter,
+    Hierarchy,
+    Level,
     Measure,
     Relationship,
     SummarizeBy,
@@ -71,7 +74,9 @@ __all__ = [
     "DaxError",
     "DaxType",
     "Expr",
+    "Hierarchy",
     "Keyword",
+    "Level",
     "Measure",
     "Model",
     "ModelError",
@@ -82,6 +87,8 @@ __all__ = [
     "Table",
     "TableExpr",
     "__version__",
+    "from_bim",
+    "from_tmdl",
     "sources",
     *_function_names,
     *_special_names,

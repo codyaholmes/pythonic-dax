@@ -522,6 +522,21 @@ class ColumnName(Expr):
         return "[" + self.name.replace("]", "]]") + "]", PREC_ATOM
 
 
+class UnsupportedDax(Expr):
+    """DAX text the library can't build, kept so the model still imports.
+
+    Evaluating it raises :class:`~pythonic_dax.errors.NotSupportedError` with the
+    reason, so nothing ever returns an answer that might differ from Power BI.
+    """
+
+    def __init__(self, text: str, reason: str) -> None:
+        self.text = text
+        self.reason = reason
+
+    def _dax(self) -> tuple[str, int]:
+        return self.text.strip(), 0
+
+
 # --- variables ------------------------------------------------------------------
 
 

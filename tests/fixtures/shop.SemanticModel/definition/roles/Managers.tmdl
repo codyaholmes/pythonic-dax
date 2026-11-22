@@ -1,0 +1,4 @@
+role Managers
+	modelPermission: read
+
+	tablePermission Product = [Color] = "Red"

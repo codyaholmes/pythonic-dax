@@ -1,0 +1,21 @@
+/// A made-up shop model for import tests.
+model Model
+	culture: en-US
+	defaultPowerBIDataSourceVersion: powerBI_V3
+	sourceQueryCulture: en-US
+	dataAccessOptions
+		legacyRedirects
+		returnErrorValuesAsNull
+
+	annotation PBI_QueryOrder = ["Product","Sales"]
+
+	annotation __PBI_TimeIntelligenceEnabled = 1
+
+ref table Product
+ref table Sales
+ref table Dates
+ref table _Measures
+ref table LocalDateTable_8f3a1c2e-1111-2222-3333-444455556666
+
+ref cultureInfo en-US
+ref cultureInfo es-ES

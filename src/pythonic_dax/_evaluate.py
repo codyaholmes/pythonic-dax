@@ -46,6 +46,7 @@ from .expr import (
     TableVarBlock,
     TableVarRef,
     UnaryOp,
+    UnsupportedDax,
     VarBlock,
     VarRef,
     _Omitted,
@@ -443,6 +444,8 @@ class Evaluator:
             return sc.negate(value) if node.op == "-" else value
         if isinstance(node, Call):
             return self._call(node, ctx)
+        if isinstance(node, UnsupportedDax):
+            raise NotSupportedError(node.reason)
         if getattr(node, "kind", None) == "table":
             return self._table_as_value(self.table(node, ctx))
         raise TypeError(f"can't evaluate {node!r} as a value")
@@ -486,6 +489,11 @@ class Evaluator:
                 i = row.frame.find_name(node.name)
                 if i is not None:
                     return row.frame.rows[row.index][i]
+            elif node.name in row.table:
+                raise NotSupportedError(
+                    f"the unqualified column reference [{node.name}] to a model column "
+                    f"(write it as {row.table.ref}[{node.name}])"
+                )
         raise DaxError(
             f"Column '{node.name}' cannot be found or may not be used in this expression."
         )

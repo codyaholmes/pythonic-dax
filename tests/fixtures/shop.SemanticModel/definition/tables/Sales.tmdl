@@ -1,0 +1,47 @@
+table Sales
+	lineageTag: 6a7b1c2d-aaaa-bbbb-cccc-000000000010
+
+	column ProductKey
+		dataType: int64
+		isHidden
+		summarizeBy: none
+		sourceColumn: product_key
+
+	column 'Order Date'
+		dataType: dateTime
+		formatString: Short Date
+		summarizeBy: none
+		sourceColumn: order_date
+
+	column 'Ship Date'
+		dataType: dateTime
+		formatString: Short Date
+		summarizeBy: none
+		sourceColumn: ship_date
+
+	column Qty
+		dataType: int64
+		summarizeBy: sum
+		sourceColumn: qty
+
+	column Price
+		dataType: decimal
+		formatString: $#,0.00;($#,0.00);$#,0.00
+		summarizeBy: none
+		sourceColumn: price
+
+	column 'Line Total' =
+			// quantity times price
+			Sales[Qty] * Sales[Price]
+		dataType: decimal
+		formatString: $#,0.00
+		displayFolder: Amounts
+		summarizeBy: sum
+
+	partition Sales = m
+		mode: import
+		source =
+				let
+				    Source = Sql.Database("server", "shop")
+				in
+				    Source

@@ -274,6 +274,45 @@ pst.bar_chart(report, Date["Month"], model["Sales Amount"], key="by_month")
 pst.table(report, [Product["Product"]], [model["Sales Amount"], model["Margin %"]])
 ```
 
+**Phase 10 (model import and DAX text) is built.**
+
+```python
+from pythonic_dax.sources import Database, Parquet
+
+model = pdax.from_tmdl(               # or pdax.from_bim("model.bim", ...)
+    "Sales.SemanticModel",            # a Power BI project's semantic model folder
+    data={
+        "Sales": Parquet("data/sales/*.parquet"),
+        "Product": Database("SELECT * FROM dim_product", connection),
+    },
+    culture="es-ES",                  # optional: translated captions become display names
+)
+model["Sales Amount"].expression.to_dax()   # the measure, parsed from the model's DAX
+
+model.parse_dax("CALCULATE([Sales Amount], ALL(Product))")  # DAX text to an expression
+model.evaluate_dax("EVALUATE SUMMARIZECOLUMNS(Product[Color], \"Sales\", [Sales Amount])")
+```
+
+* **What's imported:** tables and column types, relationships (active and inactive,
+  cardinality, cross-filter direction), measures, calculated columns, calculated
+  tables, hierarchies, and metadata: descriptions, format strings, display folders,
+  hidden flags, sort-by columns, data categories, summarize-by, key columns,
+  annotations and the date table mark.
+* **Data comes from you:** Power BI loads data with Power Query, which this library
+  doesn't run. `data` maps each table to a source (Parquet, a database query, a
+  DataFrame) or is a function of the table name. Columns are matched by the model's
+  `sourceColumn` names, or by the column names.
+* **DAX is parsed into the same expressions as the Python functions,** so every check
+  and every engine rule applies. All 100 golden cases' DAX queries parse back to the
+  Python they came from and give Power BI's answers.
+* **Refused rather than guessed:** calculation groups, DirectQuery and Dual tables,
+  many-to-many relationships, DAX user-defined functions and column variations. A
+  measure whose DAX uses something unsupported still imports, raises
+  `NotSupportedError` when used, and is listed in `model.import_notes`. `overrides=`
+  replaces any measure, calculated column or calculated table with Python or other
+  DAX, and `skip_tables=` leaves tables out. Roles and perspectives are read but not
+  applied, and the hidden automatic date tables are left out.
+
 Every planned DAX function is now evaluated. Anything the engine can't reproduce
 exactly raises `NotSupportedError`. It never guesses at an answer that might differ
 from Power BI.

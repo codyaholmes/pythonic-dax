@@ -1,0 +1,20 @@
+table LocalDateTable_8f3a1c2e-1111-2222-3333-444455556666
+	isHidden
+	showAsVariationsOnly
+
+	column Date
+		dataType: dateTime
+		isHidden
+		summarizeBy: none
+		isNameInferred
+		sourceColumn: [Date]
+
+	hierarchy 'Date Hierarchy'
+		level Year
+			column: Date
+
+	partition LocalDateTable_8f3a1c2e-1111-2222-3333-444455556666 = calculated
+		mode: import
+		source = Calendar(Date(Year(MIN('Product'[Launch Date])), 1, 1), Date(Year(MAX('Product'[Launch Date])), 12, 31))
+
+	annotation __PBI_LocalDateTable = true

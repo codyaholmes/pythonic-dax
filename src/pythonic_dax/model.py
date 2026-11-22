@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any
@@ -21,7 +22,7 @@ from .objects import (
     Table,
     duplicate_count,
 )
-from .sources import as_source
+from .sources import Source, as_source
 from .types import DaxType
 
 
@@ -40,7 +41,11 @@ class Model:
         self._tables: NameMap[Table] = NameMap("table")
         self._measures: NameMap[Measure] = NameMap("measure")
         self._relationships: list[Relationship] = []
-        self._calculated: list[Column] = []
+        # Calculated columns and tables, in the order they were added. Each can only
+        # use objects added before it, so this order is safe to recompute in.
+        self._calculated: list[Column | Table] = []
+        self.import_notes: list[str] = []
+        """What an import (:func:`pythonic_dax.from_tmdl`) left out or couldn't build."""
 
     # --- tables ---------------------------------------------------------------
 
@@ -90,6 +95,68 @@ class Model:
         self._tables.add(name, table)
         return table
 
+    def add_calculated_table(
+        self,
+        name: str,
+        expression: Any,
+        *,
+        columns: dict[str, dict[str, Any]] | None = None,
+        description: str | None = None,
+        display_name: str | None = None,
+        is_hidden: bool = False,
+        annotations: dict[str, str] | None = None,
+    ) -> Table:
+        """Add a calculated table: a table expression evaluated when the model loads.
+
+        As in Power BI, it is evaluated with no filters and recomputed by
+        :meth:`refresh`. Its columns take the names of the expression's columns, so
+        ``ADDCOLUMNS(CALENDAR(...), "Year", YEAR([Date]))`` gives ``Date`` and ``Year``::
+
+            dates = CALENDAR(DATE(2024, 1, 1), DATE(2024, 12, 31))
+            Dates = model.add_calculated_table("Dates", dates)
+
+        ``columns`` sets per-column properties, as in :meth:`add_table`. A
+        ``source_column`` property picks the expression column by its full name, such
+        as ``"Product[Color]"`` or ``"[Year]"``, for a model column with another name.
+        """
+        _check_name(name, "table")
+        if name in self._tables:
+            raise ModelError(f"a table named {self._tables[name].name!r} already exists")
+        node = coerce_any(expression)
+        if node.kind != "table":
+            raise DaxError(f"a calculated table needs a table expression, not {node.to_dax()}")
+        for col in columns_in(node):
+            if col.table.model is not self:
+                raise ModelError(f"{col.ref} belongs to a different model")
+
+        column_props = {k: dict(v) for k, v in (columns or {}).items()}
+        renames = {
+            props.pop("source_column"): col_name
+            for col_name, props in column_props.items()
+            if "source_column" in props
+        }
+        source = _CalculatedTable(self, node, renames)
+        frame = source.load()
+        column_types = {c: _storage_type(frame.schema[c]) for c in frame.columns}
+        for col_name, props in column_props.items():
+            if "data_type" in props:
+                column_types[col_name] = DaxType(props.pop("data_type"))
+        table = Table(self, name, source)
+        source.frame = frame  # reuse the evaluation done above
+        table._load(column_types, first_load=True)
+        table.expression = node
+        for col_name, props in column_props.items():
+            table[col_name].set(**props)
+        table.set(
+            description=description,
+            display_name=display_name,
+            is_hidden=is_hidden,
+            annotations=dict(annotations or {}),
+        )
+        self._tables.add(name, table)
+        self._calculated.append(table)
+        return table
+
     @property
     def tables(self) -> list[Table]:
         return list(self._tables)
@@ -107,11 +174,17 @@ class Model:
         saved = {t.name: t._data for t in self._tables}
         try:
             for table in self._tables:
-                table._load({}, first_load=False)
+                if not table.is_calculated:
+                    table._load({}, first_load=False)
             for rel in self._relationships:
                 rel._invalidate()
-            for col in self._calculated:
-                self._compute_column(col)
+            for item in self._calculated:
+                if isinstance(item, Table):
+                    item._load({}, first_load=False)
+                else:
+                    self._compute_column(item)
+                for rel in self._relationships:
+                    rel._invalidate()
             for rel in self._relationships:
                 rel._invalidate()
                 _check_keys(rel)
@@ -458,7 +531,11 @@ class Model:
                 raise ModelError(f"{col.ref} belongs to a different model")
         if _transitions(node) and self.row_identifier(home) is None:
             for other in self._calculated:
-                if other.table is home and _transitions(other.expression):
+                if (
+                    isinstance(other, Column)
+                    and other.table is home
+                    and _transitions(other.expression)
+                ):
                     new_ref = f"{home.ref}[{name}]"
                     raise DaxError(
                         f"A circular dependency was detected: {new_ref}, {other.ref}, "
@@ -528,6 +605,33 @@ class Model:
     def _compute_column(self, column: Column) -> None:
         values = self._column_values(column)
         column.table._data = column.table._data.with_columns(_series(column, values))
+
+    # --- DAX text -----------------------------------------------------------------
+
+    def parse_dax(self, text: str, *, table: Table | str | None = None) -> Any:
+        """Build an expression from DAX text, the same one the Python functions build.
+
+        ``model.parse_dax("SUM(Sales[Amount])")`` equals ``SUM(Sales["Amount"])``. Pass
+        ``table`` for a calculated column's formula, where ``[Price]`` means that
+        table's column. Syntax the engine doesn't reproduce raises
+        :class:`NotSupportedError`; invalid DAX raises :class:`DaxError`.
+        """
+        from ._parser import ModelResolver, parse
+
+        home = self._tables[table] if isinstance(table, str) else table
+        return parse(text, ModelResolver(self), home)
+
+    def evaluate_dax(self, query: str) -> pl.DataFrame:
+        """Run a DAX query, as in Power BI's DAX query view: ``DEFINE ... EVALUATE ...``.
+
+        As in Power BI, ``DEFINE MEASURE`` and ``DEFINE COLUMN`` last only for the
+        query (a query measure replaces a model measure of the same name), and may refer
+        to each other in any order. One ``EVALUATE`` is supported, without ``ORDER BY``.
+        """
+        from ._parser import evaluate_query
+
+        result: pl.DataFrame = evaluate_query(self, query)
+        return result
 
     # --- metadata ---------------------------------------------------------------
 
@@ -634,6 +738,66 @@ class Model:
             f"Model({len(self._tables)} tables, {len(self._relationships)} relationships, "
             f"{len(self._measures)} measures)"
         )
+
+
+class _CalculatedTable(Source):
+    """The source of a calculated table: its expression, evaluated on the model."""
+
+    def __init__(self, model: Model, expression: Any, renames: dict[str, str]) -> None:
+        self.model = model
+        self.expression = expression
+        self.renames = renames
+        self.frame: pl.DataFrame | None = None
+
+    def load(self) -> pl.DataFrame:
+        if self.frame is not None:
+            frame, self.frame = self.frame, None
+            return frame
+        result = self.model.evaluate(self.expression)
+        names: dict[str, str] = {}
+        wanted = {_normal_label(k): v for k, v in self.renames.items()}
+        seen: set[str] = set()
+        for label in result.columns:
+            name = wanted.get(_normal_label(label)) or _label_name(label)
+            if name.casefold() in seen:
+                raise NotSupportedError(f"a calculated table with two columns named {name!r}")
+            seen.add(name.casefold())
+            names[label] = name
+        return result.rename(names)
+
+    def describe(self) -> str:
+        return f"calculated table: {self.expression.to_dax()}"
+
+
+_LABEL = re.compile(r"\[((?:[^\]]|\]\])*)\]$")
+
+
+def _label_name(label: str) -> str:
+    """The column name in a result label: ``Color`` from ``Product[Color]``."""
+    m = _LABEL.search(label)
+    return m.group(1).replace("]]", "]") if m else label
+
+
+def _normal_label(label: str) -> str:
+    """A result label compared without quotes or case: ``'Sales'[X]`` is ``sales[x]``."""
+    label = label.strip()
+    m = _LABEL.search(label)
+    if not m:
+        return label.casefold()
+    table = label[: m.start()].strip()
+    if table.startswith("'") and table.endswith("'"):
+        table = table[1:-1].replace("''", "'")
+    return f"{table}[{m.group(1)}]".casefold()
+
+
+def _storage_type(dtype: pl.DataType) -> DaxType:
+    """The DAX type of a result column, from the dtype the engine stores it in."""
+    for dax_type in DaxType:
+        if dax_type.polars_dtype == dtype:
+            return dax_type
+    from .types import infer_dax_type
+
+    return infer_dax_type(dtype)
 
 
 def _transitions(node: Any) -> bool:

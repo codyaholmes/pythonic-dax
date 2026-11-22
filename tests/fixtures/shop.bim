@@ -1,0 +1,415 @@
+{
+  "name": "Shop",
+  "compatibilityLevel": 1567,
+  "model": {
+    "tables": [
+      {
+        "name": "Product",
+        "description": "One row per product.",
+        "annotations": [
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ],
+        "columns": [
+          {
+            "type": "rowNumber",
+            "name": "RowNumber-2662979B-1795-4F74-8F37-6A1BA8059B61",
+            "dataType": "int64",
+            "isHidden": true,
+            "isUnique": true,
+            "isKey": true,
+            "isNullable": false,
+            "attributeHierarchy": {}
+          },
+          {
+            "name": "ProductKey",
+            "dataType": "int64",
+            "sourceColumn": "product_key",
+            "formatString": "0",
+            "isHidden": true,
+            "isKey": true,
+            "summarizeBy": "none",
+            "description": "The product's key.",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ]
+          },
+          {
+            "name": "Color",
+            "dataType": "string",
+            "sourceColumn": "color",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Launch Date",
+            "dataType": "dateTime",
+            "sourceColumn": "launch_date",
+            "formatString": "General Date",
+            "summarizeBy": "none",
+            "annotations": [
+              {
+                "name": "SummarizationSetBy",
+                "value": "Automatic"
+              }
+            ],
+            "variations": [
+              {
+                "name": "Variation"
+              }
+            ]
+          },
+          {
+            "name": "Product Sales",
+            "formatString": "$#,0.00",
+            "summarizeBy": "sum",
+            "description": "Sales of the product, whatever the filters on other products.",
+            "type": "calculated",
+            "expression": [
+              "[Total Sales]"
+            ]
+          }
+        ],
+        "partitions": [
+          {
+            "name": "Product",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    Source = Parquet.Document(File.Contents(\"C:\\data\\product.parquet\"))",
+                "in",
+                "    Source"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "Sales",
+        "columns": [
+          {
+            "type": "rowNumber",
+            "name": "RowNumber-2662979B-1795-4F74-8F37-6A1BA8059B61",
+            "dataType": "int64",
+            "isHidden": true,
+            "isUnique": true,
+            "isKey": true,
+            "isNullable": false,
+            "attributeHierarchy": {}
+          },
+          {
+            "name": "ProductKey",
+            "dataType": "int64",
+            "sourceColumn": "product_key",
+            "isHidden": true,
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Order Date",
+            "dataType": "dateTime",
+            "sourceColumn": "order_date",
+            "formatString": "Short Date",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Ship Date",
+            "dataType": "dateTime",
+            "sourceColumn": "ship_date",
+            "formatString": "Short Date",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Qty",
+            "dataType": "int64",
+            "sourceColumn": "qty",
+            "summarizeBy": "sum"
+          },
+          {
+            "name": "Price",
+            "dataType": "decimal",
+            "sourceColumn": "price",
+            "formatString": "$#,0.00;($#,0.00);$#,0.00",
+            "summarizeBy": "none"
+          },
+          {
+            "name": "Line Total",
+            "dataType": "decimal",
+            "formatString": "$#,0.00",
+            "displayFolder": "Amounts",
+            "summarizeBy": "sum",
+            "type": "calculated",
+            "expression": [
+              "// quantity times price",
+              "Sales[Qty] * Sales[Price]"
+            ]
+          }
+        ],
+        "partitions": [
+          {
+            "name": "Sales",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    Source = Sql.Database(\"server\", \"shop\")",
+                "in",
+                "    Source"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "Dates",
+        "dataCategory": "Time",
+        "columns": [
+          {
+            "type": "rowNumber",
+            "name": "RowNumber-2662979B-1795-4F74-8F37-6A1BA8059B61",
+            "dataType": "int64",
+            "isHidden": true,
+            "isUnique": true,
+            "isKey": true,
+            "isNullable": false,
+            "attributeHierarchy": {}
+          },
+          {
+            "name": "Date",
+            "dataType": "dateTime",
+            "sourceColumn": "[Date]",
+            "formatString": "Long Date",
+            "isKey": true,
+            "summarizeBy": "none",
+            "isNameInferred": true,
+            "type": "calculatedTableColumn"
+          },
+          {
+            "name": "Year",
+            "dataType": "int64",
+            "sourceColumn": "[Year]",
+            "formatString": "0",
+            "summarizeBy": "none",
+            "isNameInferred": true,
+            "type": "calculatedTableColumn"
+          },
+          {
+            "name": "MonthNo",
+            "dataType": "int64",
+            "sourceColumn": "[MonthNo]",
+            "isHidden": true,
+            "summarizeBy": "none",
+            "isNameInferred": true,
+            "type": "calculatedTableColumn"
+          },
+          {
+            "name": "Month",
+            "dataType": "string",
+            "sourceColumn": "[Month]",
+            "summarizeBy": "none",
+            "sortByColumn": "MonthNo",
+            "isNameInferred": true,
+            "type": "calculatedTableColumn"
+          }
+        ],
+        "hierarchies": [
+          {
+            "name": "Calendar",
+            "levels": [
+              {
+                "name": "Year",
+                "column": "Year",
+                "ordinal": 0
+              },
+              {
+                "name": "Month",
+                "column": "Month",
+                "ordinal": 1
+              }
+            ]
+          }
+        ],
+        "partitions": [
+          {
+            "name": "Dates",
+            "mode": "import",
+            "source": {
+              "type": "calculated",
+              "expression": [
+                "ADDCOLUMNS (",
+                "    CALENDAR ( DATE ( 2024, 1, 1 ), DATE ( 2024, 3, 31 ) ),",
+                "    \"Year\", YEAR ( [Date] ),",
+                "    \"MonthNo\", MONTH ( [Date] ),",
+                "    \"Month\", FORMAT ( [Date], \"mmm\" )",
+                ")"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "_Measures",
+        "columns": [
+          {
+            "type": "rowNumber",
+            "name": "RowNumber-2662979B-1795-4F74-8F37-6A1BA8059B61",
+            "dataType": "int64",
+            "isHidden": true,
+            "isUnique": true,
+            "isKey": true,
+            "isNullable": false,
+            "attributeHierarchy": {}
+          }
+        ],
+        "measures": [
+          {
+            "name": "Total Sales",
+            "formatString": "$#,0.00",
+            "displayFolder": "Sales",
+            "description": "Sum of line totals.",
+            "expression": "SUM(Sales[Line Total])"
+          },
+          {
+            "name": "Shipped Sales",
+            "formatString": "$#,0.00",
+            "displayFolder": "Sales",
+            "expression": [
+              "CALCULATE (",
+              "    [Total Sales],",
+              "    USERELATIONSHIP ( Sales[Ship Date], Dates[Date] )",
+              ")"
+            ]
+          },
+          {
+            "name": "Red Share",
+            "formatString": "0.0%",
+            "expression": [
+              "VAR red = CALCULATE ( [Total Sales], Product[Color] = \"Red\" )",
+              "VAR total = CALCULATE ( [Total Sales], ALL ( Product ) )",
+              "RETURN",
+              "    DIVIDE ( red, total )"
+            ]
+          },
+          {
+            "name": "Median Qty",
+            "expression": "PERCENTILE.INC(Sales[Qty], 0.5)"
+          },
+          {
+            "name": "Units",
+            "formatString": "#,0",
+            "isHidden": true,
+            "expression": "SUM(Sales[Qty])"
+          }
+        ],
+        "partitions": [
+          {
+            "name": "_Measures",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    Source = Table.FromRows({})",
+                "in",
+                "    Source"
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "relationships": [
+      {
+        "name": "0a1b2c3d-0000-0000-0000-000000000001",
+        "fromTable": "Sales",
+        "fromColumn": "ProductKey",
+        "toTable": "Product",
+        "toColumn": "ProductKey"
+      },
+      {
+        "name": "0a1b2c3d-0000-0000-0000-000000000002",
+        "fromTable": "Sales",
+        "fromColumn": "Order Date",
+        "toTable": "Dates",
+        "toColumn": "Date"
+      },
+      {
+        "name": "0a1b2c3d-0000-0000-0000-000000000003",
+        "isActive": false,
+        "fromTable": "Sales",
+        "fromColumn": "Ship Date",
+        "toTable": "Dates",
+        "toColumn": "Date"
+      }
+    ],
+    "cultures": [
+      {
+        "name": "en-US",
+        "translations": {}
+      },
+      {
+        "name": "es-ES",
+        "translations": {
+          "model": {
+            "name": "Model",
+            "tables": [
+              {
+                "name": "Product",
+                "translatedCaption": "Producto",
+                "columns": [
+                  {
+                    "name": "Color",
+                    "translatedCaption": "Color del producto"
+                  }
+                ]
+              },
+              {
+                "name": "_Measures",
+                "measures": [
+                  {
+                    "name": "Total Sales",
+                    "translatedCaption": "Ventas totales"
+                  }
+                ]
+              },
+              {
+                "name": "Dates",
+                "hierarchies": [
+                  {
+                    "name": "Calendar",
+                    "translatedCaption": "Calendario"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "culture": "en-US",
+    "defaultPowerBIDataSourceVersion": "powerBI_V3",
+    "sourceQueryCulture": "en-US",
+    "description": "A made-up shop model for import tests.",
+    "annotations": [
+      {
+        "name": "PBI_QueryOrder",
+        "value": "[\"Product\",\"Sales\"]"
+      },
+      {
+        "name": "__PBI_TimeIntelligenceEnabled",
+        "value": "1"
+      }
+    ],
+    "roles": [
+      {
+        "name": "Managers"
+      }
+    ]
+  }
+}
