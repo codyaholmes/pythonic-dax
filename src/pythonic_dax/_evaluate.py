@@ -1457,27 +1457,38 @@ _FLIPPED = {"=": "=", "==": "==", "<>": "<>", "<": ">", "<=": ">=", ">": "<", ">
 _NUMERIC = (DaxType.INTEGER, DaxType.DECIMAL, DaxType.CURRENCY)
 
 
-def _vector_condition(node: Any, frame: pl.DataFrame, columns: list[Column]) -> pl.Series | None:
+def _vector_condition(
+    node: Any,
+    frame: pl.DataFrame,
+    columns: list[Column],
+    variable: Callable[[Any], Value] | None = None,
+) -> pl.Series | None:
     """A True/False filter evaluated over all value combinations at once.
 
-    Handles comparisons of a column with a number or text literal, IN with a list of
-    literals, and &&, || and NOT of those, with the same rules as the scalar
-    operators. Anything else returns None and is evaluated one row at a time.
+    Handles comparisons of a column with a number, text or date literal (or with a
+    variable, when ``variable`` gives its value), IN with a list of literals, and &&,
+    || and NOT of those, with the same rules as the scalar operators. Anything else
+    returns None and is evaluated one row at a time.
     """
     try:
-        expr = _vector_expr(node, frame, columns)
+        expr = _vector_expr(node, frame, columns, variable)
     except _NoVector:
         return None
     return frame.select(expr.fill_null(False).alias("r"))["r"]
 
 
-def _vector_expr(node: Any, frame: pl.DataFrame, columns: list[Column]) -> pl.Expr:
+def _vector_expr(
+    node: Any,
+    frame: pl.DataFrame,
+    columns: list[Column],
+    variable: Callable[[Any], Value] | None = None,
+) -> pl.Expr:
     if isinstance(node, BinaryOp) and node.op in ("&&", "||"):
-        left = _vector_expr(node.left, frame, columns)
-        right = _vector_expr(node.right, frame, columns)
+        left = _vector_expr(node.left, frame, columns, variable)
+        right = _vector_expr(node.right, frame, columns, variable)
         return left & right if node.op == "&&" else left | right
     if isinstance(node, Call) and node.name == "NOT":
-        return ~_vector_expr(node.args[0], frame, columns)
+        return ~_vector_expr(node.args[0], frame, columns, variable)
     if not isinstance(node, BinaryOp):
         raise _NoVector
     if node.op == "IN" and isinstance(node.right, TableConstructor):
@@ -1501,18 +1512,27 @@ def _vector_expr(node: Any, frame: pl.DataFrame, columns: list[Column]) -> pl.Ex
     if node.op not in _FLIPPED:
         raise _NoVector
     op, subject, literal = node.op, node.left, node.right
-    if isinstance(subject, Literal_):
+    if isinstance(subject, Literal_ | VarRef):
         op, subject, literal = _FLIPPED[op], literal, subject
-    if not isinstance(literal, Literal_) or literal.value is None:
+    if isinstance(literal, Literal_):
+        given = literal.value
+    elif isinstance(literal, VarRef) and variable is not None:
+        # A variable is bound outside the iteration, so it has one value for every row.
+        given = variable(literal)
+    else:
+        raise _NoVector
+    if given is None:
         raise _NoVector
     column = _vector_column(subject, frame, columns)
-    value = _vector_literal(column, literal.value)
+    value = _vector_literal(column, given)
     col = pl.col(column.name)
     if column.data_type is DaxType.STRING:
         if op not in ("=", "<>", "=="):
             raise _NoVector
         col, value = col.str.to_lowercase(), value.lower()
         blank: Any = ""
+    elif column.data_type is DaxType.DATETIME:
+        blank = sc.BASE_DATE
     else:
         if column.data_type is DaxType.CURRENCY:
             col = col.cast(pl.Float64)
@@ -1542,6 +1562,8 @@ def _vector_column(node: Any, frame: pl.DataFrame, columns: list[Column]) -> Col
 
 def _vector_literal(column: Column, value: Any) -> Any:
     if column.data_type is DaxType.STRING and isinstance(value, str):
+        return value
+    if column.data_type is DaxType.DATETIME and isinstance(value, dt.datetime):
         return value
     if (
         column.data_type in _NUMERIC

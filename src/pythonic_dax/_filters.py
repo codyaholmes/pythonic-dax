@@ -193,7 +193,9 @@ def normalized(column: Column, name: str | None = None) -> pl.Expr:
 
 def bool_series(height: int, value: bool) -> pl.Series:
     """A True/False series of one value, built without a Python list."""
-    return pl.repeat(value, height, dtype=pl.Boolean, eager=True)
+    if height == 0:
+        return pl.Series([], dtype=pl.Boolean)
+    return pl.Series([value], dtype=pl.Boolean).new_from_index(0, height)  # fastest
 
 
 class _ModelCache:

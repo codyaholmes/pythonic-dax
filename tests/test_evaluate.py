@@ -335,3 +335,27 @@ def test_containsstring_refuses_what_a_kept_spelling_could_change() -> None:
     for find in ['""', '"b "', '"a?"']:
         with pytest.raises(pdax.NotSupportedError, match="differ only by case"):
             m.evaluate(m.parse_dax(f'SELECTCOLUMNS(T, "x", CONTAINSSTRING(T[N], {find}))'))
+
+
+def test_filter_against_a_variable_matches_row_by_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+
+    m = pdax.Model()
+    days = [dt.datetime(2024, 1, d) if d else None for d in (5, 3, 0, 9, 5, 1)]
+    m.add_table(
+        "T",
+        pl.DataFrame(
+            {"k": [1, 1, 1, 2, None, 0], "d": days, "s": ["a", "c", None, "b", "", "a"]},
+            schema={"k": pl.Int64, "d": pl.Datetime("us"), "s": pl.String},
+        ),
+    )
+    query = m.parse_dax(
+        'SELECTCOLUMNS(T, "n", VAR K = T[k] VAR D = T[d] VAR S = T[s] RETURN '
+        'COUNTROWS(FILTER(T, T[k] = K && T[d] >= D)) & "|" & '
+        'COUNTROWS(FILTER(T, T[d] < D || T[k] <> K)) & "|" & '
+        "COUNTROWS(FILTER(T, T[s] = S)))"
+    )
+    fast = m.evaluate(query)
+    _tables = importlib.import_module("pythonic_dax._tables")  # loaded by evaluate
+    monkeypatch.setattr(_tables, "_vector_condition", lambda *args: None)
+    assert m.evaluate(query).equals(fast)
