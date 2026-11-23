@@ -303,3 +303,13 @@ def test_circular_measures() -> None:
     model = build(copy.deepcopy(raw), data())
     with pytest.raises(NotSupportedError, match="circular dependency"):
         model.evaluate(pdax.ROW("a", model["A"]))
+
+
+def test_measures_can_be_left_out() -> None:
+    full = pdax.from_tmdl(TMDL, data=data())
+    model = pdax.from_tmdl(TMDL, data=data(), measures=False)
+    # Product[Product Sales] = [Total Sales], so that measure is kept.
+    assert [m.name for m in model.measures] == ["Total Sales"]
+    assert any("left out" in n and "Total Sales" in n for n in model.import_notes)
+    product = model.table("Product")
+    assert model.evaluate(product).equals(full.evaluate(full.table("Product")))
