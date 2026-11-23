@@ -705,7 +705,7 @@ class Evaluator:
         for pairs in by_table.values():
             columns = [c for c, _ in pairs]
             for c in columns:
-                self.storage.check_text(c)
+                self.storage.check_text(c, case_ok=True)
             values = pl.DataFrame(
                 [pl.Series(c.name, [v], dtype=c.data_type.polars_dtype) for c, v in pairs]
             )
@@ -1020,7 +1020,9 @@ class Evaluator:
                 columns.append(c)
         table = columns[0].table
         for c in columns:
-            self.storage.check_text(c)
+            # The column-at-once comparisons match text without case, so they give the
+            # same values whichever spelling Power BI keeps; the row-by-row path doesn't.
+            self.storage.check_text(c, case_ok=True)
         names = [c.name for c in columns]
         combos = (
             self.storage.ext(table)
@@ -1030,6 +1032,8 @@ class Evaluator:
         )
         hits = _vector_condition(node, combos, columns)
         if hits is None:
+            for c in columns:
+                self.storage.check_text(c)
             keep = []
             for index in combos["__i"].to_list():
                 row = RowRef(table, index, tuple(columns))
@@ -1079,7 +1083,7 @@ class Evaluator:
     ) -> list[ColumnFilter]:
         present = self.storage.present_columns(table)
         for c in present:
-            self.storage.check_text(c)
+            self.storage.check_text(c, case_ok=True)  # filter keys match without case
         names = [c.name for c in present]
         result = [ColumnFilter(table, present, self.storage.ext(table).filter(mask).select(names))]
         for many, one in self._expansion_steps(table, fc, unsure):
@@ -1716,7 +1720,7 @@ def _lookupvalue(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
         if column.table is not table:
             raise NotSupportedError("LOOKUPVALUE with search columns from another table")
         wanted = ev.scalar(args[i + 1], ctx)
-        ev.storage.check_text(column)
+        ev.storage.check_text(column, case_ok=True)  # matched without case
         values = ext[column.name].to_list()
         # Strict: BLANK finds only BLANK values (not 0 or ""), and 0 or "" not BLANK.
         if wanted is None:

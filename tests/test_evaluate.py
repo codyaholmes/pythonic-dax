@@ -359,3 +359,15 @@ def test_filter_against_a_variable_matches_row_by_row(monkeypatch: pytest.Monkey
     _tables = importlib.import_module("pythonic_dax._tables")  # loaded by evaluate
     monkeypatch.setattr(_tables, "_vector_condition", lambda *args: None)
     assert m.evaluate(query).equals(fast)
+
+
+def test_text_case_variants_are_still_refused_where_the_spelling_shows() -> None:
+    m = pdax.Model()
+    m.add_table("T", pl.DataFrame({"name": ["Smith", "SMITH"], "v": [1, 2]}))
+    for dax in [
+        "VALUES(T[name])",
+        'SELECTCOLUMNS(T, "x", T[name] & "!")',
+        'FILTER(T, LEFT(T[name], 2) = "Sm")',
+    ]:
+        with pytest.raises(pdax.NotSupportedError, match="differ only by case"):
+            m.evaluate(m.parse_dax(dax))
