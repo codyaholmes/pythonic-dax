@@ -156,7 +156,8 @@ def _dates(ev: Evaluator, node: Any, ctx: Context, fn: str) -> _Dates:
             raise NotSupportedError(f"{fn} over a date column with blanks")
         # The column means CALCULATETABLE(DISTINCT(<column>)): row contexts become filters.
         inner = ev.calculate_context([], ctx)
-        visible = ev.column_distinct(column, inner, blank=True).to_list()
+        # Time intelligence ignores the blank row that unmatched keys add to the dates.
+        visible = ev.column_distinct(column, inner, blank=False).to_list()
         return _Dates(column, all_dates, _to_dates(visible, "dates"))
     if isinstance(node, TableCall) and node.name in _DATE_SET_FUNCTIONS:
         # A date-set function's result, as in PREVIOUSDAY(STARTOFMONTH(<dates>)).

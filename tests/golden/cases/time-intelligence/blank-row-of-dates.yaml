@@ -1,0 +1,68 @@
+id: time-intelligence-blank-row-of-dates
+description: >-
+  Time intelligence ignores the blank row that unmatched keys add to a date table. MxDt has a
+  BLANK date and one after the calendar, so the blank Year row and the total both see Dates'
+  blank row. On the blank row the date functions return no dates, and at the total they work
+  from the real dates only.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data (tables MxDt and Dates in Test Landing)
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Dates:
+      calendar: {start: 2023-01-01, end: 2024-12-31}
+    MxDt:
+      columns:
+        d: date
+        amt: integer
+      rows:
+      - [2023-03-05, 1]
+      - [2024-03-05, 10]
+      - [2024-03-20, 100]
+      - [null, 1000]
+      - [2030-01-01, 10000]
+  relationships:
+  - from: MxDt[d]
+    to: Dates[Date]
+python: |
+  total = model.add_measure("Total", SUM(MxDt["amt"]), table="MxDt")
+  D = Dates["Date"]
+  result = model.evaluate(SUMMARIZECOLUMNS(ROLLUPADDISSUBTOTAL(Dates["Year"], "tot"), {
+      "amt": total,
+      "vals": COUNTROWS(VALUES(D)),
+      "spl": CALCULATE(total, SAMEPERIODLASTYEAR(D)),
+      "splRows": COUNTROWS(SAMEPERIODLASTYEAR(D)),
+      "dateadd": COUNTROWS(DATEADD(D, -1, YEAR)),
+      "ytd": CALCULATE(total, DATESYTD(D)),
+      "py": COUNTROWS(PREVIOUSYEAR(D)),
+      "pp": COUNTROWS(PARALLELPERIOD(D, -1, YEAR)),
+      "first": MINX(FIRSTDATE(D), D),
+      "last": MAXX(LASTDATE(D), D),
+      "eom": COUNTROWS(DATESMTD(D)),
+  }))
+dax: |
+  DEFINE
+      MEASURE MxDt[Total] = SUM(MxDt[amt])
+  EVALUATE
+      SUMMARIZECOLUMNS(ROLLUPADDISSUBTOTAL(Dates[Year], "tot"), "amt", [Total], "vals", COUNTROWS(VALUES(Dates[Date])), "spl", CALCULATE([Total], SAMEPERIODLASTYEAR(Dates[Date])), "splRows", COUNTROWS(SAMEPERIODLASTYEAR(Dates[Date])), "dateadd", COUNTROWS(DATEADD(Dates[Date], -1, YEAR)), "ytd", CALCULATE([Total], DATESYTD(Dates[Date])), "py", COUNTROWS(PREVIOUSYEAR(Dates[Date])), "pp", COUNTROWS(PARALLELPERIOD(Dates[Date], -1, YEAR)), "first", MINX(FIRSTDATE(Dates[Date]), Dates[Date]), "last", MAXX(LASTDATE(Dates[Date]), Dates[Date]), "eom", COUNTROWS(DATESMTD(Dates[Date])))
+expected:
+  ordered: false
+  columns:
+    Dates[Year]: integer
+    '[tot]': boolean
+    '[amt]': integer
+    '[vals]': integer
+    '[spl]': integer
+    '[splRows]': integer
+    '[dateadd]': integer
+    '[ytd]': integer
+    '[py]': integer
+    '[pp]': integer
+    '[first]': datetime
+    '[last]': datetime
+    '[eom]': integer
+  rows:
+  - [null, false, 11000, 1, null, null, null, null, null, null, null, null, null]
+  - [2023, false, 1, 365, null, null, null, 1, null, null, 2023-01-01T00:00:00, 2023-12-31T00:00:00, 31]
+  - [2024, false, 110, 366, 1, 365, 365, 110, 365, 365, 2024-01-01T00:00:00, 2024-12-31T00:00:00, 31]
+  - [null, true, 11111, 732, 1, 365, 365, 110, null, 365, 2023-01-01T00:00:00, 2024-12-31T00:00:00, 31]
