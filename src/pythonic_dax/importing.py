@@ -76,6 +76,7 @@ def from_tmdl(
     culture: str | None = None,
     skip_tables: Sequence[str] = (),
     overrides: Mapping[str, Any] | None = None,
+    measures: bool = True,
 ) -> Model:
     """Build a model from a TMDL folder (a ``.SemanticModel`` folder or its ``definition``).
 
@@ -84,8 +85,10 @@ def from_tmdl(
     ``skip_tables`` leaves tables out, along with their relationships. ``overrides``
     replaces the DAX of a measure (by name), a calculated column (``"Table[Column]"``)
     or a calculated table (by name) with a Python expression or other DAX text.
+    ``measures=False`` leaves out the measures, except those a calculated column or
+    calculated table uses, for writing your own; ``import_notes`` lists the ones kept.
     """
-    return build(_tmdl.read_folder(path), data, culture, skip_tables, overrides)
+    return build(_tmdl.read_folder(path), data, culture, skip_tables, overrides, measures)
 
 
 def from_bim(
@@ -95,11 +98,12 @@ def from_bim(
     culture: str | None = None,
     skip_tables: Sequence[str] = (),
     overrides: Mapping[str, Any] | None = None,
+    measures: bool = True,
 ) -> Model:
     """Build a model from a ``model.bim`` file (the JSON model of Analysis Services and
     older Power BI projects). The options are the same as :func:`from_tmdl`."""
     raw = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    return build(raw, data, culture, skip_tables, overrides)
+    return build(raw, data, culture, skip_tables, overrides, measures)
 
 
 # --- building ----------------------------------------------------------------------
@@ -111,12 +115,13 @@ def build(
     culture: str | None = None,
     skip_tables: Sequence[str] = (),
     overrides: Mapping[str, Any] | None = None,
+    measures: bool = True,
 ) -> Model:
     """Build a model from a ``model.bim`` style dictionary."""
     spec = raw.get("model", raw)
     if not isinstance(spec, dict) or "tables" not in spec:
         raise ModelError("this isn't a semantic model: it has no tables")
-    return _Importer(spec, data, culture, skip_tables, overrides or {}).run()
+    return _Importer(spec, data, culture, skip_tables, overrides or {}, measures).run()
 
 
 class _Importer:
@@ -127,8 +132,10 @@ class _Importer:
         culture: str | None,
         skip_tables: Sequence[str],
         overrides: Mapping[str, Any],
+        measures: bool = True,
     ) -> None:
         self.spec = spec
+        self.keep_measures = measures
         self.data = data
         self.culture = culture
         self.overrides = {_key(k): v for k, v in overrides.items()}
@@ -180,8 +187,19 @@ class _Importer:
         self.relationships = [r for r in self.spec.get("relationships", []) if self._keep(r)]
         self._add_ready_relationships()
         for pending in list(self.pending):
-            if pending in self.pending:
+            if pending in self.pending and (self.keep_measures or pending[0] != "measure"):
                 self._build(pending)
+        if not self.keep_measures:
+            left_out = [k for k in self.pending if k[0] == "measure"]
+            for key in left_out:
+                item = self.pending.pop(key)[0]
+                if _key(item["name"]) in self.overrides:
+                    self.used_overrides.add(_key(item["name"]))
+            kept = sorted(m.name for m in self.model._measures)
+            self.notes.append(
+                f"left out {len(left_out)} measures, as asked"
+                + (f"; kept {len(kept)} that calculated objects use: {kept}" if kept else "")
+            )
         self._add_ready_relationships()
         if self.relationships:
             names = [_rel_label(r) for r in self.relationships]

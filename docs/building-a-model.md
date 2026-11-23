@@ -696,6 +696,9 @@ assert shop.value("Total Sales") == 37.5  # 1 x 10 + 2 x 5.5 + 3 x 5.5
   uses `PERCENTILE.INC`, which the engine doesn't evaluate.
 * **`skip_tables`** leaves tables out, with their relationships. **`culture`** picks a
   translation, such as `"es-ES"`, whose captions become display names.
+* **`measures=False`** leaves out the measures, so you can write your own on the
+  imported tables. Measures that a calculated column or calculated table uses are kept,
+  and `model.import_notes` names them.
 * **Refused rather than guessed:** calculation groups, DirectQuery tables, many-to-many
   relationships and DAX user-defined functions. A measure that uses something
   unsupported still imports and raises `NotSupportedError` when it's used.

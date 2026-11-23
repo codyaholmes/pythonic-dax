@@ -43,7 +43,7 @@ from ._evaluate import (
     unify,
 )
 from .errors import CalculationError, DaxError, NotSupportedError
-from .expr import Call, Keyword, _Omitted
+from .expr import Call, Keyword, _Omitted, is_column
 from .objects import Cardinality, CrossFilter, SummarizeBy
 from .types import DaxType
 
@@ -594,9 +594,16 @@ def _exact(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
 
 
 def _containsstring(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
-    within = _text(ev.scalar(args[0], ctx))
     found = ev.scalar(args[1], ctx)
     find = "" if found is None else _format.to_text(found)  # BLANK finds like ""
+    unchecked = False
+    if is_column(args[0]) and not find.endswith(" ") and not any(c in find for c in "?*~"):
+        # The search ignores case and can't end in trailing spaces, so it finds the same
+        # in every spelling Power BI might keep of a text value, unless the value is
+        # only spaces (then "" could be kept, where nothing is found).
+        raw = ev._column_value(args[0], ctx, check=False)
+        unchecked = bool(find) or not (isinstance(raw, str) and raw.strip(" ") == "")
+    within = _text(raw if unchecked else ev.scalar(args[0], ctx))
     if not within:  # Power BI: nothing is found in empty text, not even ""
         return False
     return re.search(_wildcards(find), within, re.IGNORECASE | re.DOTALL) is not None

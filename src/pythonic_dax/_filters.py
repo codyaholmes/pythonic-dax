@@ -193,7 +193,9 @@ def normalized(column: Column, name: str | None = None) -> pl.Expr:
 
 def bool_series(height: int, value: bool) -> pl.Series:
     """A True/False series of one value, built without a Python list."""
-    return pl.repeat(value, height, dtype=pl.Boolean, eager=True)
+    if height == 0:
+        return pl.Series([], dtype=pl.Boolean)
+    return pl.Series([value], dtype=pl.Boolean).new_from_index(0, height)  # fastest
 
 
 class _ModelCache:
@@ -206,7 +208,7 @@ class _ModelCache:
     def __init__(self) -> None:
         self.ext: dict[int, tuple[pl.DataFrame, bool, pl.DataFrame, int | None]] = {}
         self.maps: dict[int, tuple[Any, pl.Series]] = {}
-        self.text: dict[int, pl.DataFrame] = {}
+        self.text: dict[tuple[int, bool], pl.DataFrame] = {}
         self.keys: dict[int, tuple[Any, ...]] = {}
         self.rows: OrderedDict[tuple[int, int], tuple[Any, ...]] = OrderedDict()
 
@@ -267,24 +269,29 @@ class Storage:
             mask = mask.scatter(index, False)
         return mask
 
-    def check_text(self, column: Column) -> None:
+    def check_text(self, column: Column, *, case_ok: bool = False) -> None:
         """Refuse text columns whose values differ only by case or trailing spaces.
 
         Power BI stores one spelling for such values, and which one it keeps depends on
-        load order, so results that show these values could differ.
+        load order, so results that show these values could differ. ``case_ok`` allows
+        values that differ only by case, for uses that match text without case (filters
+        by a row's values, as in context transition), where every spelling gives the
+        same rows.
         """
         if column.data_type is not DaxType.STRING:
             return
         data = column.table.data
-        if self.cache.text.get(id(column)) is data:
+        key = (id(column), case_ok)
+        if self.cache.text.get(key) is data:
             return
         values = data[column.name].drop_nulls().unique()
-        folded = values.str.to_lowercase().str.strip_chars_end(" ").n_unique()
-        if folded != values.len():
+        lower = values.str.to_lowercase()
+        distinct = lower.n_unique() if case_ok else values.len()
+        if lower.str.strip_chars_end(" ").n_unique() != distinct:
             raise NotSupportedError(
                 f"text values in {column.ref} that differ only by case or trailing spaces"
             )
-        self.cache.text[id(column)] = data
+        self.cache.text[key] = data
 
     # --- visibility -----------------------------------------------------------------
 

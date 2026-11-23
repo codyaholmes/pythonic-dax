@@ -299,13 +299,6 @@ def test_crossfilter_on_an_inactive_relationship_is_refused() -> None:
         m.evaluate(ROW("v", expr))
 
 
-def test_lookupvalue_blank_search_is_refused(model: pdax.Model) -> None:
-    product = model.table("Product")
-    expr = pdax.LOOKUPVALUE(product["Color"], product["ProductKey"], BLANK())
-    with pytest.raises(pdax.NotSupportedError, match="BLANK"):
-        value(model, expr)
-
-
 def test_table_constructor_as_a_table(model: pdax.Model) -> None:
     result = model.evaluate(pdax.TREATAS([1, 2], model.table("Product")["ProductKey"]))
     assert result.columns == ["Product[ProductKey]"]
@@ -334,3 +327,47 @@ def test_transition_that_cannot_reach_the_measure_is_skipped() -> None:
         ' "perRow", SUMX(Dates, [Total]), "refresh", SUMX(Dates, [RefreshYear]))'
     )
     assert m.evaluate(m.parse_dax(query)).row(0) == (110, 1111, 6072)
+
+
+def test_containsstring_refuses_what_a_kept_spelling_could_change() -> None:
+    m = pdax.Model()
+    m.add_table("T", pl.DataFrame({"id": [1, 2, 3], "N": ["Ab", "AB", "  "]}))
+    for find in ['""', '"b "', '"a?"']:
+        with pytest.raises(pdax.NotSupportedError, match="differ only by case"):
+            m.evaluate(m.parse_dax(f'SELECTCOLUMNS(T, "x", CONTAINSSTRING(T[N], {find}))'))
+
+
+def test_filter_against_a_variable_matches_row_by_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+
+    m = pdax.Model()
+    days = [dt.datetime(2024, 1, d) if d else None for d in (5, 3, 0, 9, 5, 1)]
+    m.add_table(
+        "T",
+        pl.DataFrame(
+            {"k": [1, 1, 1, 2, None, 0], "d": days, "s": ["a", "c", None, "b", "", "a"]},
+            schema={"k": pl.Int64, "d": pl.Datetime("us"), "s": pl.String},
+        ),
+    )
+    query = m.parse_dax(
+        'SELECTCOLUMNS(T, "n", VAR K = T[k] VAR D = T[d] VAR S = T[s] RETURN '
+        'COUNTROWS(FILTER(T, T[k] = K && T[d] >= D)) & "|" & '
+        'COUNTROWS(FILTER(T, T[d] < D || T[k] <> K)) & "|" & '
+        "COUNTROWS(FILTER(T, T[s] = S)))"
+    )
+    fast = m.evaluate(query)
+    _tables = importlib.import_module("pythonic_dax._tables")  # loaded by evaluate
+    monkeypatch.setattr(_tables, "_vector_condition", lambda *args: None)
+    assert m.evaluate(query).equals(fast)
+
+
+def test_text_case_variants_are_still_refused_where_the_spelling_shows() -> None:
+    m = pdax.Model()
+    m.add_table("T", pl.DataFrame({"name": ["Smith", "SMITH"], "v": [1, 2]}))
+    for dax in [
+        "VALUES(T[name])",
+        'SELECTCOLUMNS(T, "x", T[name] & "!")',
+        'FILTER(T, LEFT(T[name], 2) = "Sm")',
+    ]:
+        with pytest.raises(pdax.NotSupportedError, match="differ only by case"):
+            m.evaluate(m.parse_dax(dax))

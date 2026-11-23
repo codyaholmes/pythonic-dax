@@ -1,0 +1,52 @@
+id: containsstring-case-variants
+description: >-
+  CONTAINSSTRING can read a Text column whose values differ only by case or trailing
+  spaces. Power BI may keep just one spelling of such values, but a search that ignores
+  case and doesn't end in a space finds the same in each spelling. A value that is only
+  spaces is still refused when the search text is empty, because "" might be kept instead.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data (table MxNotes in Test Landing)
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    MxNotes:
+      columns:
+        id: integer
+        NOTES: string
+      rows:
+      - [1, Called pt]
+      - [2, CALLED PT]
+      - [3, 'called pt  ']
+      - [4, left msg]
+      - [5, '  ']
+      - [6, '']
+      - [7, null]
+      - [8, Notified]
+  relationships: []
+python: |
+  N = MxNotes["NOTES"]
+  result = model.evaluate(SELECTCOLUMNS(MxNotes,
+      "id", MxNotes["id"],
+      "hasCalled", CONTAINSSTRING(N, "called"),
+      "hasPt", CONTAINSSTRING(N, "ED P"),
+      "hasNotif", CONTAINSSTRING(N, "notif"),
+  ))
+dax: |
+  EVALUATE
+      SELECTCOLUMNS(MxNotes, "id", MxNotes[id], "hasCalled", CONTAINSSTRING(MxNotes[NOTES], "called"), "hasPt", CONTAINSSTRING(MxNotes[NOTES], "ED P"), "hasNotif", CONTAINSSTRING(MxNotes[NOTES], "notif"))
+expected:
+  ordered: false
+  columns:
+    '[id]': integer
+    '[hasCalled]': boolean
+    '[hasPt]': boolean
+    '[hasNotif]': boolean
+  rows:
+  - [1, true, true, false]
+  - [2, true, true, false]
+  - [3, true, true, false]
+  - [4, false, false, false]
+  - [5, false, false, false]
+  - [6, false, false, false]
+  - [7, false, false, false]
+  - [8, false, false, true]

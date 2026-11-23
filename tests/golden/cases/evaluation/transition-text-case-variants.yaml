@@ -1,0 +1,42 @@
+id: transition-text-case-variants
+description: >-
+  Text values that differ only by case are one value in Power BI, so a filter by a row's
+  values (context transition) or a LOOKUPVALUE search finds every spelling. These uses
+  don't depend on which spelling Power BI keeps, so they work on such columns.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data (table MxCase in Test Landing)
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    MxCase:
+      columns:
+        name: string
+        v: integer
+      rows:
+      - [Smith, 1]
+      - [SMITH, 1]
+      - [smith, 2]
+      - [Jones, 1]
+      - [jones, 5]
+  relationships: []
+python: |
+  result = model.evaluate(model.parse_dax(
+      'ADDCOLUMNS(SUMMARIZE(MxCase, MxCase[v]), '
+      '"sameRows", CALCULATE(COUNTROWS(MxCase), MxCase[name] = "smith"), '
+      '"lk", LOOKUPVALUE(MxCase[v], MxCase[name], "JONES", MxCase[v], MxCase[v]), '
+      '"perRow", SUMX(FILTER(MxCase, MxCase[v] = EARLIER(MxCase[v])), CALCULATE(COUNTROWS(MxCase))))'
+  ))
+dax: |
+  EVALUATE
+      ADDCOLUMNS(SUMMARIZE(MxCase, MxCase[v]), "sameRows", CALCULATE(COUNTROWS(MxCase), MxCase[name] = "smith"), "lk", LOOKUPVALUE(MxCase[v], MxCase[name], "JONES", MxCase[v], MxCase[v]), "perRow", SUMX(FILTER(MxCase, MxCase[v] = EARLIER(MxCase[v])), CALCULATE(COUNTROWS(MxCase))))
+expected:
+  ordered: false
+  columns:
+    MxCase[v]: integer
+    '[sameRows]': integer
+    '[lk]': integer
+    '[perRow]': integer
+  rows:
+  - [1, 2, 1, 5]
+  - [2, 1, null, 1]
+  - [5, null, 5, 1]
