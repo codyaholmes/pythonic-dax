@@ -486,6 +486,8 @@ class Evaluator:
         for row in reversed(ctx.rows):
             if isinstance(row, FrameRow):
                 i = row.frame.find_name(node.name)
+                if i is None:
+                    i = self._lineage_name(row.frame, node.name)
                 if i is not None:
                     return row.frame.rows[row.index][i]
             elif node.name in row.table:
@@ -494,6 +496,22 @@ class Evaluator:
         raise DaxError(
             f"Column '{node.name}' cannot be found or may not be used in this expression."
         )
+
+    @staticmethod
+    def _lineage_name(frame: Frame, name: str) -> int | None:
+        """[PROC_CODE] in SELECTCOLUMNS(VALUES(T[PROC_CODE]), ...) is the row's T[PROC_CODE]."""
+        found = [
+            i
+            for i, c in enumerate(frame.columns)
+            if c.column is not None
+            and c.name.lower() == f"{c.column.table.name}[{name}]".lower()
+            and c.column.name.lower() == name.lower()
+        ]
+        if len(found) > 1:
+            raise NotSupportedError(
+                f"[{name}] where the row has more than one column of that name from the model"
+            )
+        return found[0] if found else None
 
     def rows_of(self, value: TableValue) -> list[Row]:
         """One row context per row of a table, as an iterator like SUMX makes them."""

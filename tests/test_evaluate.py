@@ -310,3 +310,12 @@ def test_table_constructor_as_a_table(model: pdax.Model) -> None:
     result = model.evaluate(pdax.TREATAS([1, 2], model.table("Product")["ProductKey"]))
     assert result.columns == ["Product[ProductKey]"]
     assert result["Product[ProductKey]"].to_list() == [1, 2]
+
+
+def test_bare_name_reads_model_columns_only_by_their_own_name() -> None:
+    # Power BI: SUMX(SELECTCOLUMNS(T, "y", T[OPT_ID]), [OPT_ID]) can't find OPT_ID.
+    m = pdax.Model()
+    m.add_table("T", pl.DataFrame({"OPT_ID": [10, 20], "K": [1, 1]}))
+    assert m.evaluate(m.parse_dax('ROW("r", SUMX(VALUES(T[OPT_ID]), [OPT_ID]))')).item() == 30
+    with pytest.raises(pdax.DaxError, match="Column 'OPT_ID' cannot be found"):
+        m.evaluate(m.parse_dax('ROW("r", SUMX(SELECTCOLUMNS(T, "y", T[OPT_ID]), [OPT_ID]))'))

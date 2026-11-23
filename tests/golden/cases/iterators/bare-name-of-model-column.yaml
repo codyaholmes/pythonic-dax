@@ -1,0 +1,45 @@
+id: bare-name-of-model-column
+description: >-
+  A bare [INV] reads the row's MxTr[INV] when the row comes from a table like VALUES(MxTr[INV])
+  or SUMMARIZE, where the column keeps its full name. A column SELECTCOLUMNS renames can't be
+  read by the model name (Power BI: "Column 'OPT_ID' cannot be found").
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data (table MxTr in Test Landing)
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    MxTr:
+      columns:
+        INV: string
+        OPT_ID: integer
+        x: decimal
+      rows:
+      - [a, 10, 1]
+      - [a, 20, 2]
+      - [b, 10, 4]
+      - [c, 30, 8]
+  relationships: []
+python: |
+  inv = VALUES(MxTr["INV"])
+  codes = SELECTCOLUMNS(inv, {"@c": inv["INV"]})
+  others = SELECTCOLUMNS(FILTER(inv, inv["INV"] != "b"), {"@c": inv["INV"]})
+  opt = VALUES(MxTr["OPT_ID"])
+  summary = SUMMARIZE(MxTr, MxTr["OPT_ID"])
+  result = model.evaluate(ROW(
+      "a", CONCATENATEX(codes, codes["@c"], ",", codes["@c"], ASC),
+      "b", SUMX(opt, opt["OPT_ID"]),
+      "c", COUNTROWS(INTERSECT(codes, others)),
+      "d", SUMX(summary, summary["OPT_ID"]),
+  ))
+dax: |
+  EVALUATE
+      ROW("a", CONCATENATEX(SELECTCOLUMNS(VALUES(MxTr[INV]), "@c", [INV]), [@c], ",", [@c], ASC), "b", SUMX(VALUES(MxTr[OPT_ID]), [OPT_ID]), "c", COUNTROWS(INTERSECT(SELECTCOLUMNS(VALUES(MxTr[INV]), "@c", [INV]), SELECTCOLUMNS(FILTER(VALUES(MxTr[INV]), [INV] <> "b"), "@c", [INV]))), "d", SUMX(SUMMARIZE(MxTr, MxTr[OPT_ID]), [OPT_ID]))
+expected:
+  ordered: false
+  columns:
+    '[a]': string
+    '[b]': integer
+    '[c]': integer
+    '[d]': integer
+  rows:
+  - ["a,b,c", 60, 2, 60]
