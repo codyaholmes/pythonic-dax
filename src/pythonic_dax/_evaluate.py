@@ -535,8 +535,10 @@ class Evaluator:
             self._groups = {t: find(t) for t in parent}
         return self._groups
 
-    def _column_value(self, column: Column, ctx: Context) -> Value:
-        """A column's value in the innermost row context that has the column."""
+    def _column_value(self, column: Column, ctx: Context, *, check: bool = True) -> Value:
+        """A column's value in the innermost row context that has the column.
+        ``check=False`` skips refusing text that differs only by case or trailing
+        spaces, for callers whose result is the same for each such spelling."""
         for row in reversed(ctx.rows):
             if isinstance(row, FrameRow):
                 i = row.frame.find(column)
@@ -546,7 +548,8 @@ class Evaluator:
             if row.table is column.table:
                 if row.columns is not None and not any(c is column for c in row.columns):
                     continue
-                self.storage.check_text(column)
+                if check:
+                    self.storage.check_text(column)
                 return self.storage.ext(column.table)[column.name][row.index]
         raise DaxError(
             f"A single value for column '{column.name}' in table '{column.table.name}' cannot "

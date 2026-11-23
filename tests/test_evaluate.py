@@ -327,3 +327,11 @@ def test_transition_that_cannot_reach_the_measure_is_skipped() -> None:
         ' "perRow", SUMX(Dates, [Total]), "refresh", SUMX(Dates, [RefreshYear]))'
     )
     assert m.evaluate(m.parse_dax(query)).row(0) == (110, 1111, 6072)
+
+
+def test_containsstring_refuses_what_a_kept_spelling_could_change() -> None:
+    m = pdax.Model()
+    m.add_table("T", pl.DataFrame({"id": [1, 2, 3], "N": ["Ab", "AB", "  "]}))
+    for find in ['""', '"b "', '"a?"']:
+        with pytest.raises(pdax.NotSupportedError, match="differ only by case"):
+            m.evaluate(m.parse_dax(f'SELECTCOLUMNS(T, "x", CONTAINSSTRING(T[N], {find}))'))
