@@ -93,6 +93,17 @@ def test_tmdl_quoted_names_and_unknown_objects() -> None:
     assert table.children[1].type == "somethingNew"  # kept as an object, not an error
 
 
+def test_tmdl_quoted_sort_by_column() -> None:
+    # Power BI writes sortByColumn: 'Year Month' when the name has a space
+    nodes = _tmdl.parse(
+        "table Dates\n\tcolumn 'Month Name'\n\t\tdataType: string\n"
+        "\t\tsortByColumn: 'Year Month'\n"
+        "\tcolumn 'Year Month'\n\t\tdataType: int64\n"
+    )
+    table = _tmdl.to_bim(nodes)["model"]["tables"][0]
+    assert table["columns"][0]["sortByColumn"] == "Year Month"
+
+
 def test_tmdl_errors_name_the_file_and_line(tmp_path: Path) -> None:
     (tmp_path / "model.tmdl").write_text("model Model\n\t\t\tculture: en-US\n")
     with pytest.raises(ModelError, match=r"model.tmdl, line 2: unexpected indentation"):

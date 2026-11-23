@@ -1,0 +1,51 @@
+id: library-int-of-text
+description: >-
+  INT converts Text the way VALUE does (spaces, thousands separators, a leading $ and exponents
+  are fine) and then rounds down, so INT("-12.7") is -13. TRUE and FALSE become 1 and 0. Empty
+  text, words and percentages are errors, not BLANK.
+source: powerbi
+reference: Power BI Desktop, query tool, no table data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Customer:
+      columns:
+        CustomerKey: integer
+      rows:
+      - [1]
+  relationships: []
+python: |
+  result = model.evaluate(ROW(
+      'a', INT('202611'),
+      'b', INT('12.7'),
+      'c', INT('-12.7'),
+      'd', INT(TRUE()),
+      'e', INT(FALSE()),
+      'f', INT(' 42 '),
+      'g', INT('1,234.5'),
+      'h', INT('$5.5'),
+      'i', INT('1e3'),
+      'j', ISERROR(INT('abc')),
+      'k', ISERROR(INT('')),
+      'm', ISERROR(INT('5%')),
+  ))
+dax: |
+  EVALUATE
+      ROW("a", INT("202611"), "b", INT("12.7"), "c", INT("-12.7"), "d", INT(TRUE()), "e", INT(FALSE()), "f", INT(" 42 "), "g", INT("1,234.5"), "h", INT("$5.5"), "i", INT("1e3"), "j", ISERROR(INT("abc")), "k", ISERROR(INT("")), "m", ISERROR(INT("5%")))
+expected:
+  ordered: false
+  columns:
+    '[a]': integer
+    '[b]': integer
+    '[c]': integer
+    '[d]': integer
+    '[e]': integer
+    '[f]': integer
+    '[g]': integer
+    '[h]': integer
+    '[i]': integer
+    '[j]': boolean
+    '[k]': boolean
+    '[m]': boolean
+  rows:
+  - [202611, 12, -13, 1, 0, 42, 1234, 5, 1000, true, true, true]

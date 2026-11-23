@@ -300,7 +300,12 @@ def _round(x: int | float | Decimal, digits: int, mode: str, name: str) -> Value
 
 
 def _int(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
-    x = _number(ev.scalar(args[0], ctx), "INT")
+    value = ev.scalar(args[0], ctx)
+    if isinstance(value, bool):  # INT(TRUE()) is 1
+        return int(value)
+    if isinstance(value, str):  # INT("202611") converts the text, as VALUE does
+        value = parse_number(value)
+    x = _number(value, "INT")
     if x is None:
         return None
     if isinstance(x, int):
