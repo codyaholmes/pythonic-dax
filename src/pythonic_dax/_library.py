@@ -595,15 +595,19 @@ def _exact(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
 
 def _containsstring(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
     within = _text(ev.scalar(args[0], ctx))
-    find = _needed_text(ev.scalar(args[1], ctx), "CONTAINSSTRING", "text to find")
-    if within is None:
+    found = ev.scalar(args[1], ctx)
+    find = "" if found is None else _format.to_text(found)  # BLANK finds like ""
+    if not within:  # Power BI: nothing is found in empty text, not even ""
         return False
     return re.search(_wildcards(find), within, re.IGNORECASE | re.DOTALL) is not None
 
 
 def _containsstringexact(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
+    found = ev.scalar(args[1], ctx)
+    find = "" if found is None else _format.to_text(found)
+    if find == "":  # Power BI: empty or BLANK text is found in anything, even BLANK
+        return True
     within = _needed_text(ev.scalar(args[0], ctx), "CONTAINSSTRINGEXACT", "text to search")
-    find = _needed_text(ev.scalar(args[1], ctx), "CONTAINSSTRINGEXACT", "text to find")
     if any(ch in find for ch in "?*~"):
         raise NotSupportedError("CONTAINSSTRINGEXACT with wildcard characters")
     return find in within

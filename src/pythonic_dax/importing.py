@@ -412,6 +412,13 @@ class _Importer:
                 f"{exc.feature} (in the calculated column {label}; replace its DAX with "
                 "overrides=, or leave its table out with skip_tables=)"
             ) from exc
+        except DaxError as exc:
+            # Power BI keeps such a column in an error state, and anything using it
+            # errors too. Leaving it out has the same effect here.
+            self.notes.append(
+                f"left out the calculated column {label}, whose DAX gives an error: {exc}"
+            )
+            return
         self._column_metadata(column, item)
 
     def _build_table(self, item: dict[str, Any]) -> None:

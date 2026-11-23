@@ -398,14 +398,14 @@ class Storage:
         one_ext = self.ext(one.table)
         many_ext = self.ext(many.table)
         one_keys = (
-            one_ext.select(normalized(one).alias("k"))
+            one_ext.select(rel.key(one).alias("k"))
             .with_row_index("__j")
             .filter(self.real_rows(one.table))
             .drop_nulls("k")
         )
         if one_keys["k"].n_unique() != one_keys.height:
             raise NotSupportedError(f"duplicate keys on the one side of {rel!r}")
-        joined = many_ext.select(normalized(many).alias("k")).join(
+        joined = many_ext.select(rel.key(many).alias("k")).join(
             one_keys, on="k", how="left", maintain_order="left"
         )
         index = joined["__j"]
@@ -436,9 +436,18 @@ class Storage:
                         f"relationship keys with trailing spaces ({col.ref}); Power BI "
                         "may match them to keys without the spaces"
                     )
+        if rel.text_to_number:
+            ends = (rel.from_column, rel.to_column)
+            text = next(c for c in ends if c.data_type is DaxType.STRING)
+            values = text.table.data[text.name].drop_nulls()
+            if (~values.str.contains(r"^-?(?:0|[1-9][0-9]*)$")).any():
+                raise NotSupportedError(
+                    f"a Text key that isn't a plain whole number ({text.ref}) in a relationship "
+                    "to a Whole Number column"
+                )
         if rel.cardinality is Cardinality.ONE_TO_ONE:
-            one = rel.to_column.table.data.select(normalized(rel.to_column).alias("k"))["k"]
-            many = rel.from_column.table.data.select(normalized(rel.from_column).alias("k"))["k"]
+            one = rel.to_column.table.data.select(rel.key(rel.to_column).alias("k"))["k"]
+            many = rel.from_column.table.data.select(rel.key(rel.from_column).alias("k"))["k"]
             if (~one.drop_nulls().is_in(many.drop_nulls().implode())).any():
                 raise NotSupportedError(
                     "a one-to-one relationship where both sides have keys the other lacks"

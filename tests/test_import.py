@@ -271,6 +271,17 @@ def test_refused_features() -> None:
         build(raw, data())
 
 
+def test_calculated_column_with_an_error_is_left_out() -> None:
+    # Power BI keeps such a column in an error state (e.g. a table that was deleted)
+    raw = spec()
+    product_table = raw["model"]["tables"][0]
+    calc = next(c for c in product_table["columns"] if c.get("type") == "calculated")
+    calc["expression"] = "COUNTROWS('No Such Table')"
+    model = build(raw, data())
+    assert calc["name"] not in model.table(product_table["name"])
+    assert any("whose DAX gives an error" in n for n in model.import_notes)
+
+
 def test_unsupported_calculated_column_names_itself() -> None:
     raw = spec()
     product_table = raw["model"]["tables"][0]

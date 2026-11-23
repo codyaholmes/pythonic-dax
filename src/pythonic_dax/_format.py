@@ -363,13 +363,13 @@ def date_tokens(fmt: str) -> tuple[list[tuple[str, str]], bool]:
         pos = 0
         for m in _DATE_TOKEN.finditer(text):
             for ch in text[pos : m.start()]:
-                if ch not in " /-:,.":
+                if ch not in " /-:,.'":
                     raise NotSupportedError(f"the character {ch!r} in a date format")
                 tokens.append(("lit", ch))
             tokens.append(("tok", m.group(0)))
             pos = m.end()
         for ch in text[pos:]:
-            if ch not in " /-:,.":
+            if ch not in " /-:,.'":
                 raise NotSupportedError(f"the character {ch!r} in a date format")
             tokens.append(("lit", ch))
     return tokens, twelve

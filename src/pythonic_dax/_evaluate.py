@@ -30,7 +30,6 @@ from ._filters import (
     RelationshipState,
     Storage,
     bool_series,
-    normalized,
 )
 from .errors import DaxError, NotSupportedError
 from .expr import (
@@ -973,11 +972,12 @@ class Evaluator:
         result = [ColumnFilter(table, present, self.storage.ext(table).filter(mask).select(names))]
         for many, one in self._expansion_steps(table):
             other = one.table
-            self.storage._check_keys(self._relationship(many, one))
-            keys = self.storage.ext(table).filter(mask).select(normalized(many).alias("k"))["k"]
+            rel = self._relationship(many, one)
+            self.storage._check_keys(rel)
+            keys = self.storage.ext(table).filter(mask).select(rel.key(many).alias("k"))["k"]
             one_ext = self.storage.ext(other)
             one_real = self.storage.real_rows(other)
-            one_keys = one_ext.select(normalized(one).alias("k"))["k"]
+            one_keys = one_ext.select(rel.key(one).alias("k"))["k"]
             other_mask = one_keys.is_in(keys.drop_nulls().implode()).fill_null(False) & one_real
             blank = self.storage.blank_index(other)
             if blank is not None:

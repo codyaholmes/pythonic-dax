@@ -214,10 +214,30 @@ def test_text_keys_match_ignoring_case() -> None:
 
 def test_related_columns_must_share_a_type() -> None:
     m = pdax.Model()
-    a = m.add_table("A", pl.DataFrame({"k": [1]}))
+    a = m.add_table("A", pl.DataFrame({"k": [1.5]}))
     b = m.add_table("B", pl.DataFrame({"k": ["1"]}))
     with pytest.raises(ModelError, match="same data type"):
         m.add_relationship(a["k"], b["k"])
+
+
+def test_text_to_whole_number_relationship() -> None:
+    # Power BI allows Text keys against Whole Number keys and matches "1" to 1
+    m = pdax.Model()
+    loc = m.add_table("Location", pl.DataFrame({"locid": [1, 2], "Name": ["N", "S"]}))
+    appt = m.add_table("Appt", pl.DataFrame({"locid": ["1", "1", "2", "9"], "n": [1, 1, 1, 1]}))
+    m.add_relationship(appt["locid"], loc["locid"])
+    frame = m.evaluate(pdax.SUMMARIZECOLUMNS(loc["Name"], "n", pdax.SUM(appt["n"])))
+    assert sorted(frame.rows(), key=str) == sorted([("N", 2), ("S", 1), (None, 1)], key=str)
+    assert m.value(pdax.COUNTROWS(appt), loc["Name"] == "S") == 1
+
+
+def test_text_to_whole_number_relationship_refuses_unclear_text() -> None:
+    m = pdax.Model()
+    loc = m.add_table("Location", pl.DataFrame({"locid": [1], "Name": ["N"]}))
+    appt = m.add_table("Appt", pl.DataFrame({"locid": ["01"], "n": [1]}))
+    m.add_relationship(appt["locid"], loc["locid"])
+    with pytest.raises(pdax.NotSupportedError, match="plain whole number"):
+        m.value(pdax.COUNTROWS(appt), loc["Name"] == "N")
 
 
 def test_relationship_to_same_table_is_rejected(model: pdax.Model) -> None:

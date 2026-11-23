@@ -1,0 +1,52 @@
+id: library-containsstring-blank
+description: >-
+  CONTAINSSTRING finds BLANK or "" in any non-empty text, but finds nothing at all in empty or
+  BLANK text, not even "". CONTAINSSTRINGEXACT finds BLANK or "" everywhere, even in BLANK.
+source: powerbi
+reference: Power BI Desktop, query tool, no table data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Customer:
+      columns:
+        CustomerKey: integer
+      rows:
+      - [1]
+  relationships: []
+python: |
+  result = model.evaluate(ROW(
+      'a', CONTAINSSTRING('abc', BLANK()),
+      'b', CONTAINSSTRING('abc', ''),
+      'c', CONTAINSSTRING(BLANK(), 'a'),
+      'd', CONTAINSSTRING(BLANK(), BLANK()),
+      'e', CONTAINSSTRINGEXACT('abc', BLANK()),
+      'f', CONTAINSSTRING('', BLANK()),
+      'g', CONTAINSSTRING('', ''),
+      'h', CONTAINSSTRINGEXACT('', ''),
+      'i', CONTAINSSTRINGEXACT('', BLANK()),
+      'j', CONTAINSSTRINGEXACT(BLANK(), BLANK()),
+      'k', CONTAINSSTRINGEXACT(BLANK(), ''),
+      'l', CONTAINSSTRING(BLANK(), ''),
+      'm', CONTAINSSTRING(' ', BLANK()),
+  ))
+dax: |
+  EVALUATE
+      ROW("a", CONTAINSSTRING("abc", BLANK()), "b", CONTAINSSTRING("abc", ""), "c", CONTAINSSTRING(BLANK(), "a"), "d", CONTAINSSTRING(BLANK(), BLANK()), "e", CONTAINSSTRINGEXACT("abc", BLANK()), "f", CONTAINSSTRING("", BLANK()), "g", CONTAINSSTRING("", ""), "h", CONTAINSSTRINGEXACT("", ""), "i", CONTAINSSTRINGEXACT("", BLANK()), "j", CONTAINSSTRINGEXACT(BLANK(), BLANK()), "k", CONTAINSSTRINGEXACT(BLANK(), ""), "l", CONTAINSSTRING(BLANK(), ""), "m", CONTAINSSTRING(" ", BLANK()))
+expected:
+  ordered: false
+  columns:
+    '[a]': boolean
+    '[b]': boolean
+    '[c]': boolean
+    '[d]': boolean
+    '[e]': boolean
+    '[f]': boolean
+    '[g]': boolean
+    '[h]': boolean
+    '[i]': boolean
+    '[j]': boolean
+    '[k]': boolean
+    '[l]': boolean
+    '[m]': boolean
+  rows:
+  - [true, true, false, false, true, false, false, true, true, true, true, false, true]
