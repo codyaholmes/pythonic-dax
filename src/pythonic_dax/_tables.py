@@ -78,9 +78,11 @@ def _filter(ev: Evaluator, args: list[Any], ctx: Context) -> TableValue:
         present = ev.storage.present_columns(value.table)
         ext = ev.storage.ext(value.table)
         indices = mask.arg_true()
-        rows = ext if indices.len() == ext.height else ext[indices]
+        subset = ext if indices.len() == ext.height else ext[indices]
         hits = (
-            _vector_condition(cond, rows, present, lambda v: ev.scalar(v, ctx)) if present else None
+            _vector_condition(cond, subset, present, lambda v: ev.scalar(v, ctx))
+            if present
+            else None
         )
         if hits is None:
             keep = [
