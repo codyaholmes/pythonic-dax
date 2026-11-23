@@ -310,3 +310,27 @@ def test_table_constructor_as_a_table(model: pdax.Model) -> None:
     result = model.evaluate(pdax.TREATAS([1, 2], model.table("Product")["ProductKey"]))
     assert result.columns == ["Product[ProductKey]"]
     assert result["Product[ProductKey]"].to_list() == [1, 2]
+
+
+def test_bare_name_reads_model_columns_only_by_their_own_name() -> None:
+    # Power BI: SUMX(SELECTCOLUMNS(T, "y", T[OPT_ID]), [OPT_ID]) can't find OPT_ID.
+    m = pdax.Model()
+    m.add_table("T", pl.DataFrame({"OPT_ID": [10, 20], "K": [1, 1]}))
+    assert m.evaluate(m.parse_dax('ROW("r", SUMX(VALUES(T[OPT_ID]), [OPT_ID]))')).item() == 30
+    with pytest.raises(pdax.DaxError, match="Column 'OPT_ID' cannot be found"):
+        m.evaluate(m.parse_dax('ROW("r", SUMX(SELECTCOLUMNS(T, "y", T[OPT_ID]), [OPT_ID]))'))
+
+
+def test_transition_that_cannot_reach_the_measure_is_skipped() -> None:
+    m = pdax.Model()
+    m.add_table("Dates", pl.DataFrame({"Year": [2023, 2024, 2025], "K": [1, 2, 3]}))
+    m.add_table("Refresh", pl.DataFrame({"Year": [2024]}))
+    m.add_table("Sales", pl.DataFrame({"K": [1, 2, 2, 3], "Amt": [1, 10, 100, 1000]}))
+    m.add_relationship(m.table("Sales")["K"], m.table("Dates")["K"])
+    m.add_measure("RefreshYear", m.parse_dax("MAX(Refresh[Year])"), table="Refresh")
+    m.add_measure("Total", m.parse_dax("SUM(Sales[Amt])"), table="Sales")
+    query = (
+        'ROW("ytd", CALCULATE([Total], FILTER(ALL(Dates), Dates[Year] = [RefreshYear])),'
+        ' "perRow", SUMX(Dates, [Total]), "refresh", SUMX(Dates, [RefreshYear]))'
+    )
+    assert m.evaluate(m.parse_dax(query)).row(0) == (110, 1111, 6072)

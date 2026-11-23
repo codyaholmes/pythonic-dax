@@ -51,13 +51,14 @@ from .expr import (
     _Omitted,
     is_column,
     is_measure,
+    measures_in,
 )
-from .objects import Cardinality
+from .objects import Cardinality, Table
 from .types import DaxType
 
 if TYPE_CHECKING:
     from .model import Model
-    from .objects import Column, Relationship, Table
+    from .objects import Column, Relationship
 
 Value = Any
 
@@ -371,6 +372,11 @@ TableValue = RowSet | Frame
 
 # --- the evaluator ----------------------------------------------------------------------
 
+# Functions whose result depends on the context without naming a table.
+_CONTEXT_FNS = frozenset(
+    {"SELECTEDMEASURE", "SELECTEDMEASURENAME", "ISSELECTEDMEASURE", "SELECTEDMEASUREFORMATSTRING"}
+)
+
 
 class Evaluator:
     def __init__(self, model: Model, computing: Column | None = None) -> None:
@@ -378,6 +384,8 @@ class Evaluator:
         self.storage = Storage(model)
         self.computing = computing  # the calculated column being computed, if any
         self._measures: dict[tuple[Any, ...], Value] = {}
+        self._measure_tables: dict[int, frozenset[int] | None] = {}
+        self._groups: dict[int, int] | None = None
 
     # --- entry points ---------------------------------------------------------------
 
@@ -453,6 +461,10 @@ class Evaluator:
         """A measure: its expression after context transition. A measure's value
         depends only on the filter context it ends up in, so each is computed once per
         filter context in an evaluation."""
+        if ctx.rows and self._unreached(measure, ctx.rows):
+            # The rows' filters can't reach any table the measure reads, so the
+            # transition doesn't change its value (FILTER(ALL(Dates), [Refresh Year])).
+            ctx = replace(ctx, rows=())
         inner = self._transition(ctx, keep_env=False)
         shadow = inner.shadow.signature if inner.shadow is not None else None
         key = (id(measure), inner.filters.signature, shadow)
@@ -461,6 +473,67 @@ class Evaluator:
         value = self.scalar(measure.expression, inner)
         self._measures[key] = value
         return value
+
+    def _unreached(self, measure: Any, rows: Sequence[Row]) -> bool:
+        """Whether no table the rows filter is connected, through any relationship, to
+        a table the measure reads."""
+        read = self._tables_read(measure)
+        if read is None:
+            return False
+        groups = self._table_groups()
+        if any(t not in groups for t in read):
+            return False
+        reached = {groups[t] for t in read}
+        for row in rows:
+            if isinstance(row, RowRef):
+                tables = [row.table]
+            else:
+                tables = [c.column.table for c in row.frame.columns if c.column is not None]
+            if any(groups.get(id(t), -1) in reached or id(t) not in groups for t in tables):
+                return False
+        return True
+
+    def _tables_read(self, measure: Any) -> frozenset[int] | None:
+        """The tables a measure's expression names, with the measures it uses; None
+        when that can't be told from the expression."""
+        if id(measure) in self._measure_tables:
+            return self._measure_tables[id(measure)]
+        result: frozenset[int] | None = None
+        exprs = [measure.expression, *(m.expression for m in measures_in(measure.expression))]
+        if all(hasattr(e, "walk") for e in exprs):
+            tables: set[int] = set()
+            for e in exprs:
+                for n in e.walk():
+                    if isinstance(n, UnsupportedDax) or getattr(n, "name", None) in _CONTEXT_FNS:
+                        tables = set()
+                        break
+                    if isinstance(n, Table):
+                        tables.add(id(n))
+                    elif is_column(n):
+                        tables.add(id(n.table))
+                else:
+                    continue
+                break
+            else:
+                result = frozenset(tables)
+        self._measure_tables[id(measure)] = result
+        return result
+
+    def _table_groups(self) -> dict[int, int]:
+        """Each table's group of tables joined by relationships, active or not, in
+        either direction."""
+        if self._groups is None:
+            parent = {id(t): id(t) for t in self.model.tables}
+
+            def find(t: int) -> int:
+                while parent[t] != t:
+                    t = parent[t]
+                return t
+
+            for rel in self.model.relationships:
+                parent[find(id(rel.from_table))] = find(id(rel.to_table))
+            self._groups = {t: find(t) for t in parent}
+        return self._groups
 
     def _column_value(self, column: Column, ctx: Context) -> Value:
         """A column's value in the innermost row context that has the column."""
@@ -486,6 +559,8 @@ class Evaluator:
         for row in reversed(ctx.rows):
             if isinstance(row, FrameRow):
                 i = row.frame.find_name(node.name)
+                if i is None:
+                    i = self._lineage_name(row.frame, node.name)
                 if i is not None:
                     return row.frame.rows[row.index][i]
             elif node.name in row.table:
@@ -494,6 +569,22 @@ class Evaluator:
         raise DaxError(
             f"Column '{node.name}' cannot be found or may not be used in this expression."
         )
+
+    @staticmethod
+    def _lineage_name(frame: Frame, name: str) -> int | None:
+        """[PROC_CODE] in SELECTCOLUMNS(VALUES(T[PROC_CODE]), ...) is the row's T[PROC_CODE]."""
+        found = [
+            i
+            for i, c in enumerate(frame.columns)
+            if c.column is not None
+            and c.name.lower() == f"{c.column.table.name}[{name}]".lower()
+            and c.column.name.lower() == name.lower()
+        ]
+        if len(found) > 1:
+            raise NotSupportedError(
+                f"[{name}] where the row has more than one column of that name from the model"
+            )
+        return found[0] if found else None
 
     def rows_of(self, value: TableValue) -> list[Row]:
         """One row context per row of a table, as an iterator like SUMX makes them."""
