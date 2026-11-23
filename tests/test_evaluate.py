@@ -299,13 +299,6 @@ def test_crossfilter_on_an_inactive_relationship_is_refused() -> None:
         m.evaluate(ROW("v", expr))
 
 
-def test_lookupvalue_blank_search_is_refused(model: pdax.Model) -> None:
-    product = model.table("Product")
-    expr = pdax.LOOKUPVALUE(product["Color"], product["ProductKey"], BLANK())
-    with pytest.raises(pdax.NotSupportedError, match="BLANK"):
-        value(model, expr)
-
-
 def test_table_constructor_as_a_table(model: pdax.Model) -> None:
     result = model.evaluate(pdax.TREATAS([1, 2], model.table("Product")["ProductKey"]))
     assert result.columns == ["Product[ProductKey]"]

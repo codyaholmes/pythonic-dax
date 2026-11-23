@@ -1,0 +1,98 @@
+id: lookupvalue-blank
+description: >-
+  LOOKUPVALUE searching for BLANK finds only rows whose value is BLANK, in Whole Number and
+  Text columns alike. BLANK doesn't find 0 or empty text, and 0 or empty text doesn't find
+  BLANK. The blank row that unmatched keys add to a table is never found.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data (tables MxLk*, MxEmp and MxTr in Test Landing)
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    MxLkInt:
+      columns:
+        k: integer
+        name: string
+      rows:
+      - [1, one]
+      - [0, zero]
+      - [null, blank]
+    MxLkInt2:
+      columns:
+        k: integer
+        name: string
+      rows:
+      - [1, one]
+      - [null, blank]
+    MxLkInt3:
+      columns:
+        k: integer
+        name: string
+      rows:
+      - [1, one]
+      - [0, zero]
+    MxLkTxt:
+      columns:
+        k: string
+        name: string
+      rows:
+      - [x, ex]
+      - ['', empty]
+      - [null, blank]
+    MxLkTxt2:
+      columns:
+        k: string
+        name: string
+      rows:
+      - [x, ex]
+      - ['', empty]
+    MxEmp:
+      columns:
+        EMP_ID: string
+        EmpName: string
+      rows:
+      - ['10', Ann]
+      - ['20', Bob]
+    MxTr:
+      columns:
+        INV: string
+        OPT_ID: integer
+        x: decimal
+      rows:
+      - [a, 10, 1]
+      - [a, 20, 2]
+      - [b, 10, 4]
+      - [c, 30, 8]
+  relationships:
+  - from: MxTr[OPT_ID]
+    to: MxEmp[EMP_ID]
+python: |
+  result = model.evaluate(ROW(
+      "int", LOOKUPVALUE(MxLkInt["name"], MxLkInt["k"], BLANK(), "multi"),
+      "int0", LOOKUPVALUE(MxLkInt["name"], MxLkInt["k"], 0, "multi"),
+      "int2", LOOKUPVALUE(MxLkInt2["name"], MxLkInt2["k"], BLANK()),
+      "int3", LOOKUPVALUE(MxLkInt3["name"], MxLkInt3["k"], BLANK()),
+      "txt", LOOKUPVALUE(MxLkTxt["name"], MxLkTxt["k"], BLANK(), "multi"),
+      "txtEmpty", LOOKUPVALUE(MxLkTxt["name"], MxLkTxt["k"], "", "multi"),
+      "txt2", LOOKUPVALUE(MxLkTxt2["name"], MxLkTxt2["k"], BLANK()),
+      "int3x", LOOKUPVALUE(MxLkInt3["name"], MxLkInt3["k"], 5),
+      "blankRow", LOOKUPVALUE(MxEmp["EmpName"], MxEmp["EMP_ID"], BLANK(), "none"),
+      "vals", COUNTROWS(VALUES(MxEmp["EMP_ID"])),
+  ))
+dax: |
+  EVALUATE
+      ROW("int", LOOKUPVALUE(MxLkInt[name], MxLkInt[k], BLANK(), "multi"), "int0", LOOKUPVALUE(MxLkInt[name], MxLkInt[k], 0, "multi"), "int2", LOOKUPVALUE(MxLkInt2[name], MxLkInt2[k], BLANK()), "int3", LOOKUPVALUE(MxLkInt3[name], MxLkInt3[k], BLANK()), "txt", LOOKUPVALUE(MxLkTxt[name], MxLkTxt[k], BLANK(), "multi"), "txtEmpty", LOOKUPVALUE(MxLkTxt[name], MxLkTxt[k], "", "multi"), "txt2", LOOKUPVALUE(MxLkTxt2[name], MxLkTxt2[k], BLANK()), "int3x", LOOKUPVALUE(MxLkInt3[name], MxLkInt3[k], 5), "blankRow", LOOKUPVALUE(MxEmp[EmpName], MxEmp[EMP_ID], BLANK(), "none"), "vals", COUNTROWS(VALUES(MxEmp[EMP_ID])))
+expected:
+  ordered: false
+  columns:
+    '[int]': string
+    '[int0]': string
+    '[int2]': string
+    '[int3]': string
+    '[txt]': string
+    '[txtEmpty]': string
+    '[txt2]': string
+    '[int3x]': string
+    '[blankRow]': string
+    '[vals]': integer
+  rows:
+  - [blank, zero, blank, null, blank, empty, null, null, none, 3]

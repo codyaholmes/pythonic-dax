@@ -1691,11 +1691,13 @@ def _lookupvalue(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
         if column.table is not table:
             raise NotSupportedError("LOOKUPVALUE with search columns from another table")
         wanted = ev.scalar(args[i + 1], ctx)
-        if wanted is None:
-            raise NotSupportedError("LOOKUPVALUE searching for BLANK")
         ev.storage.check_text(column)
         values = ext[column.name].to_list()
-        hits = [v is not None and sc.compare("=", v, wanted) for v in values]
+        # Strict: BLANK finds only BLANK values (not 0 or ""), and 0 or "" not BLANK.
+        if wanted is None:
+            hits = [v is None for v in values]
+        else:
+            hits = [v is not None and sc.compare("=", v, wanted) for v in values]
         mask = mask & pl.Series(hits, dtype=pl.Boolean)
     ev.storage.check_text(result)
     found = ext[result.name].filter(mask).unique()
