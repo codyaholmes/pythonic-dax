@@ -6,6 +6,7 @@ context on that row added to the current context.
 
 from __future__ import annotations
 
+import datetime as dt
 import functools
 import itertools
 from collections.abc import Callable
@@ -167,13 +168,18 @@ def _concatenatex(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
     return delimiter.join(ordered) or None
 
 
+def _rank_key(value: Value) -> Value:
+    """RANKX orders dates by their serial number, so they rank among numbers too."""
+    return sc.to_serial(value) if isinstance(value, dt.datetime) else value
+
+
 def _rankx(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
     table, expr = args[0], args[1]
     value_node = args[2] if len(args) > 2 and not isinstance(args[2], _Omitted) else expr
     order = args[3].name if len(args) > 3 and isinstance(args[3], Keyword) else "DESC"
     ties = args[4].name if len(args) > 4 and isinstance(args[4], Keyword) else "SKIP"
-    values = iterate(ev, table, expr, ctx)
-    value = ev.scalar(value_node, ctx)
+    values = [_rank_key(v) for v in iterate(ev, table, expr, ctx)]
+    value = _rank_key(ev.scalar(value_node, ctx))
     for v in [*values, value]:
         if v is not None and (isinstance(v, bool) or not isinstance(v, int | float | Decimal)):
             raise NotSupportedError(f"RANKX of {sc.type_label(sc.type_of(v))} values")
