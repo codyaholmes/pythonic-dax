@@ -276,13 +276,15 @@ def test_keepfilters_of_all_is_refused(model: pdax.Model) -> None:
         value(model, expr)
 
 
-def test_expansion_through_an_inactive_relationship_is_refused() -> None:
+def test_expansion_with_userelationship_in_the_same_calculate_is_refused() -> None:
     m = pdax.Model()
     region = m.add_table("Region", pl.DataFrame({"R": [1, 2]}))
     store = m.add_table("Store", pl.DataFrame({"S": [1], "R": [1], "R2": [2]}))
     m.add_relationship(store["R2"], region["R"], active=False)
-    expr = pdax.CALCULATE(COUNTROWS(region), pdax.REMOVEFILTERS(store))
-    with pytest.raises(pdax.NotSupportedError, match="inactive relationship"):
+    expr = pdax.CALCULATE(
+        COUNTROWS(region), pdax.REMOVEFILTERS(store), pdax.USERELATIONSHIP(store["R2"], region["R"])
+    )
+    with pytest.raises(pdax.NotSupportedError, match="same CALCULATE"):
         m.evaluate(ROW("v", expr))
 
 
