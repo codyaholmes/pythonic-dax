@@ -191,6 +191,8 @@ def _to_python(value: Any, dax_type: str) -> Any:
         return None  # BLANK
     if dax_type in ("datetime", "date") and isinstance(value, str):
         return dt.datetime.fromisoformat(value)
+    if dax_type in ("datetime", "date") and isinstance(value, dt.datetime):
+        return value.replace(tzinfo=None)
     if dax_type in ("datetime", "date") and isinstance(value, dt.date):
         return dt.datetime.combine(value, dt.time())
     if dax_type == "currency":

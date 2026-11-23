@@ -93,6 +93,17 @@ def test_tmdl_quoted_names_and_unknown_objects() -> None:
     assert table.children[1].type == "somethingNew"  # kept as an object, not an error
 
 
+def test_tmdl_quoted_sort_by_column() -> None:
+    # Power BI writes sortByColumn: 'Year Month' when the name has a space
+    nodes = _tmdl.parse(
+        "table Dates\n\tcolumn 'Month Name'\n\t\tdataType: string\n"
+        "\t\tsortByColumn: 'Year Month'\n"
+        "\tcolumn 'Year Month'\n\t\tdataType: int64\n"
+    )
+    table = _tmdl.to_bim(nodes)["model"]["tables"][0]
+    assert table["columns"][0]["sortByColumn"] == "Year Month"
+
+
 def test_tmdl_errors_name_the_file_and_line(tmp_path: Path) -> None:
     (tmp_path / "model.tmdl").write_text("model Model\n\t\t\tculture: en-US\n")
     with pytest.raises(ModelError, match=r"model.tmdl, line 2: unexpected indentation"):
@@ -258,6 +269,17 @@ def test_refused_features() -> None:
     raw["model"]["functions"] = [{"name": "Double", "expression": "(x) => x * 2"}]
     with pytest.raises(NotSupportedError, match="user-defined functions"):
         build(raw, data())
+
+
+def test_calculated_column_with_an_error_is_left_out() -> None:
+    # Power BI keeps such a column in an error state (e.g. a table that was deleted)
+    raw = spec()
+    product_table = raw["model"]["tables"][0]
+    calc = next(c for c in product_table["columns"] if c.get("type") == "calculated")
+    calc["expression"] = "COUNTROWS('No Such Table')"
+    model = build(raw, data())
+    assert calc["name"] not in model.table(product_table["name"])
+    assert any("whose DAX gives an error" in n for n in model.import_notes)
 
 
 def test_unsupported_calculated_column_names_itself() -> None:

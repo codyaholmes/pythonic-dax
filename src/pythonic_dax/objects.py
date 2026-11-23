@@ -538,6 +538,19 @@ class Relationship(_Metadata):
         """The one side."""
         return self.to_column.table
 
+    @property
+    def text_to_number(self) -> bool:
+        """Whether one end is Text and the other a Whole Number, which Power BI allows."""
+        types = {self.from_column.data_type, self.to_column.data_type}
+        return types == {DaxType.STRING, DaxType.INTEGER}
+
+    def key(self, column: Column) -> pl.Expr:
+        """The value this relationship matches ``column`` (one of its ends) on. When one
+        end is Text and the other a Whole Number, the number is matched as its text."""
+        if self.text_to_number and column.data_type is DaxType.INTEGER:
+            return pl.col(column.name).cast(pl.Utf8)
+        return match_key(column)
+
     def set(self, **props: Any) -> Relationship:
         self._apply(props)
         return self
@@ -549,7 +562,7 @@ class Relationship(_Metadata):
         Blank keys count too. These rows belong to the one side's hidden blank row.
         """
         if self._unmatched is None:
-            self._unmatched = _count_unmatched(self.from_column, self.to_column)
+            self._unmatched = _count_unmatched(self)
         return self._unmatched
 
     def _invalidate(self) -> None:
@@ -588,9 +601,10 @@ def duplicate_count(column: Column) -> int:
     return int(keys.len() - keys.n_unique())
 
 
-def _count_unmatched(many: Column, one: Column) -> int:
-    many_keys = many.table.data.select(match_key(many).alias("k"))
-    one_keys = one.table.data.select(match_key(one).alias("k")).drop_nulls().unique()
+def _count_unmatched(rel: Relationship) -> int:
+    many, one = rel.from_column, rel.to_column
+    many_keys = many.table.data.select(rel.key(many).alias("k"))
+    one_keys = one.table.data.select(rel.key(one).alias("k")).drop_nulls().unique()
     unmatched = many_keys.join(one_keys, on="k", how="anti", nulls_equal=False)
     return unmatched.height
 

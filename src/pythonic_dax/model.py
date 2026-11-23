@@ -12,7 +12,7 @@ import polars as pl
 from ._names import NameMap
 from ._special import _orders
 from .errors import DaxError, ModelError, NotSupportedError
-from .expr import Keyword, _Omitted, coerce_any, columns_in, measures_in
+from .expr import Keyword, _Omitted, coerce_any, columns_in, is_column, measures_in
 from .objects import (
     Cardinality,
     Column,
@@ -235,7 +235,8 @@ class Model:
                 raise ModelError(f"{col.ref} is not a column of this model")
         if from_column.table is to_column.table:
             raise ModelError("a relationship must connect two different tables")
-        if from_column.data_type is not to_column.data_type:
+        mixed = {from_column.data_type, to_column.data_type} == {DaxType.STRING, DaxType.INTEGER}
+        if from_column.data_type is not to_column.data_type and not mixed:
             raise ModelError(
                 f"{from_column.ref} is {from_column.data_type.value} but {to_column.ref} is "
                 f"{to_column.data_type.value}: related columns must have the same data type"
@@ -570,11 +571,13 @@ class Model:
             if col.table.model is not self:
                 raise ModelError(f"{col.ref} belongs to a different model")
         if _transitions(node) and self.row_identifier(home) is None:
+            new_deps = self._transition_columns(node, home)
             for other in self._calculated:
-                if (
-                    isinstance(other, Column)
-                    and other.table is home
-                    and _transitions(other.expression)
+                if not isinstance(other, Column) or other.table is not home:
+                    continue
+                other_deps = self._transition_columns(other.expression, home)
+                if _depends(other_deps, name) and (
+                    _depends(new_deps, other.name) or any(c is other for c in columns_in(node))
                 ):
                     new_ref = f"{home.ref}[{name}]"
                     raise DaxError(
@@ -619,6 +622,65 @@ class Model:
         for rel in self._relationships:
             rel._invalidate()
         return column
+
+    def _transition_columns(self, node: Any, home: Table) -> set[str] | None:
+        """The columns of ``home`` whose values a calculated column's context transitions
+        depend on (folded to lower case), or None for all of them.
+
+        Power BI leaves out a transition whose expression reads only tables that
+        ``home`` can't filter, and a CALCULATE that keeps only some of ``home``'s
+        columns with ALLEXCEPT (or none with ALL or REMOVEFILTERS). That is why several
+        such columns on a table with no key don't always make a circular dependency.
+        """
+        reach = self._filtered_by(home)
+        deps: set[str] = set()
+        for point in _transition_points(node):
+            inner = [point]
+            if getattr(point, "is_measure_ref", False):
+                inner += [m.expression for m in measures_in(point) if m.expression is not None]
+                if point.expression is not None:
+                    inner.append(point.expression)
+            tables: list[Any] = []
+            for sub in inner:
+                for n in sub.walk():
+                    if getattr(n, "name", None) in _MODIFIERS and hasattr(n, "args"):
+                        return _ALL_COLUMNS
+                    if isinstance(n, Table):
+                        tables.append(n)
+                    elif is_column(n):
+                        tables.append(n.table)
+            if getattr(point, "name", None) == "RELATEDTABLE":
+                return _ALL_COLUMNS
+            if not any(id(t) in reach for t in tables):
+                continue  # nothing it reads can be filtered by home's row
+            kept = _kept_columns(point, home)
+            if kept is _ALL_COLUMNS:
+                return _ALL_COLUMNS
+            deps |= kept
+        return deps
+
+    def _filtered_by(self, home: Table) -> set[int]:
+        """Tables a filter on ``home`` reaches through active relationships."""
+        seen = {id(home)}
+        frontier = [home]
+        while frontier:
+            table = frontier.pop()
+            for rel in self._relationships:
+                if not rel.is_active:
+                    continue
+                both = rel.cross_filter is CrossFilter.BOTH or (
+                    rel.cardinality is Cardinality.ONE_TO_ONE
+                )
+                if rel.to_table is table:
+                    nxt = rel.from_table
+                elif rel.from_table is table and both:
+                    nxt = rel.to_table
+                else:
+                    continue
+                if id(nxt) not in seen:
+                    seen.add(id(nxt))
+                    frontier.append(nxt)
+        return seen
 
     def row_identifier(self, table: Table) -> Column | None:
         """A column that identifies each row of ``table``: one marked ``is_key``, or the
@@ -840,6 +902,14 @@ def _storage_type(dtype: pl.DataType) -> DaxType:
     return infer_dax_type(dtype)
 
 
+_ALL_COLUMNS = None  # a context transition that filters every column of the table
+_MODIFIERS = ("USERELATIONSHIP", "CROSSFILTER", "TREATAS")
+
+
+def _depends(deps: set[str] | None, name: str) -> bool:
+    return deps is None or name.casefold() in deps
+
+
 def _transitions(node: Any) -> bool:
     """Whether a calculated column's expression does context transition."""
     for n in node.walk():
@@ -886,3 +956,31 @@ def _check_keys(rel: Relationship) -> None:
         raise ModelError(
             f"{rel.from_column.ref} has duplicate values, so the relationship can't be one-to-one"
         )
+
+
+def _transition_points(node: Any) -> list[Any]:
+    """The measure references and CALCULATE-like calls in an expression."""
+    calls = ("CALCULATE", "CALCULATETABLE", "RELATEDTABLE")
+    return [
+        n
+        for n in node.walk()
+        if getattr(n, "is_measure_ref", False)
+        or (getattr(n, "name", None) in calls and hasattr(n, "args"))
+    ]
+
+
+def _kept_columns(point: Any, home: Table) -> set[str] | None:
+    """The columns of ``home`` a transition still filters after the CALCULATE's own
+    ALL, ALLEXCEPT or REMOVEFILTERS of the whole table; None for all of them."""
+    if getattr(point, "is_measure_ref", False) or not hasattr(point, "args"):
+        return _ALL_COLUMNS
+    for arg in point.args[1:]:
+        fn = getattr(arg, "name", None)
+        args = getattr(arg, "args", None)
+        if not args or args[0] is not home:
+            continue
+        if fn in ("ALL", "REMOVEFILTERS") and len(args) == 1:
+            return set()
+        if fn == "ALLEXCEPT" and all(is_column(a) and a.table is home for a in args[1:]):
+            return {a.name.casefold() for a in args[1:]}
+    return _ALL_COLUMNS

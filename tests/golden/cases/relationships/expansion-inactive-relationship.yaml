@@ -1,0 +1,74 @@
+id: expansion-inactive-relationship
+description: >-
+  A table expands only through relationships active in the filter context. With MxPat's
+  relationship to Dates inactive, MxPat as a filter or in ALL(MxPat) leaves Dates alone; once
+  an outer CALCULATE's USERELATIONSHIP activates it, both reach Dates. An active relationship
+  (MxInv to MxPat) always expands.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data (tables MxInv, MxPat and Dates in Test Landing, where Txn's active relationship also reaches Dates; no query here reads Txn's rows)
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Dates:
+      calendar: {start: 2023-01-01, end: 2024-12-31}
+    MxPat:
+      columns:
+        PatID: integer
+        FirstDate: date
+      rows:
+      - [1, 2023-01-05]
+      - [2, 2023-02-10]
+      - [3, 2023-02-10]
+    MxInv:
+      columns:
+        INV: string
+        PatID: integer
+      rows:
+      - [a, 1]
+      - [b, 2]
+      - [c, 2]
+    Txn:
+      columns:
+        TxnID: integer
+        TxnDate: date
+      rows:
+      - [1, 2023-03-01]
+  relationships:
+  - from: Txn[TxnDate]
+    to: Dates[Date]
+  - from: MxInv[PatID]
+    to: MxPat[PatID]
+  - from: MxPat[FirstDate]
+    to: Dates[Date]
+    active: false
+python: |
+  use = USERELATIONSHIP(MxPat["FirstDate"], Dates["Date"])
+  day = Dates["Month"] == "2023-01"
+  result = model.evaluate(ROW(
+      'all', COUNTROWS(Dates),
+      'byPat', CALCULATE(COUNTROWS(Dates), MxPat),
+      'byPat1', CALCULATE(COUNTROWS(Dates), FILTER(MxPat, MxPat["PatID"] == 1)),
+      'byInv', CALCULATE(COUNTROWS(Dates), MxInv),
+      'outerUse', CALCULATE(CALCULATE(COUNTROWS(Dates), MxPat), use),
+      'patByInv', CALCULATE(COUNTROWS(MxPat), MxInv),
+      'allPat', CALCULATE(CALCULATE(COUNTROWS(Dates), ALL(MxPat)), day),
+      'allPatUse', CALCULATE(CALCULATE(COUNTROWS(Dates), ALL(MxPat)), day, use),
+      'allInv', CALCULATE(CALCULATE(COUNTROWS(MxPat), ALL(MxInv)), MxPat["PatID"] == 1),
+  ))
+dax: |
+  EVALUATE
+      ROW("all", COUNTROWS(Dates), "byPat", CALCULATE(COUNTROWS(Dates), MxPat), "byPat1", CALCULATE(COUNTROWS(Dates), FILTER(MxPat, MxPat[PatID] = 1)), "byInv", CALCULATE(COUNTROWS(Dates), MxInv), "outerUse", CALCULATE(CALCULATE(COUNTROWS(Dates), MxPat), USERELATIONSHIP(MxPat[FirstDate], Dates[Date])), "patByInv", CALCULATE(COUNTROWS(MxPat), MxInv), "allPat", CALCULATE(CALCULATE(COUNTROWS(Dates), ALL(MxPat)), Dates[Month] = "2023-01"), "allPatUse", CALCULATE(CALCULATE(COUNTROWS(Dates), ALL(MxPat)), Dates[Month] = "2023-01", USERELATIONSHIP(MxPat[FirstDate], Dates[Date])), "allInv", CALCULATE(CALCULATE(COUNTROWS(MxPat), ALL(MxInv)), MxPat[PatID] = 1))
+expected:
+  ordered: false
+  columns:
+    '[all]': integer
+    '[byPat]': integer
+    '[byPat1]': integer
+    '[byInv]': integer
+    '[outerUse]': integer
+    '[patByInv]': integer
+    '[allPat]': integer
+    '[allPatUse]': integer
+    '[allInv]': integer
+  rows:
+  - [731, 731, 731, 731, 2, 2, 31, 731, 3]

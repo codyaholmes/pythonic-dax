@@ -414,6 +414,8 @@ def _table(node: Node) -> dict[str, Any]:
     table["columns"] = []
     for col in node.of("column"):
         column = _common(col, _COLUMN_PROPS)
+        if isinstance(column.get("sortByColumn"), str):  # sortByColumn: 'Year Month'
+            column["sortByColumn"] = _read_name(column["sortByColumn"])[0]
         if col.expression is not None:
             column["type"] = "calculated"
             column["expression"] = col.expression

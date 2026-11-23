@@ -1,0 +1,50 @@
+id: rankx-dates
+description: >-
+  RANKX ranks dates by their serial number. BLANK ranks first in ASC order and last in DESC order,
+  the time of day counts, and a plain number in the third argument is compared as a date serial
+  (44941 is 15 January 2023).
+source: powerbi
+reference: Power BI Desktop, query tool, made-up rows in a DATATABLE
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    T:
+      columns:
+        k: integer
+        d: datetime
+      rows:
+      - [1, 2023-01-05T00:00:00]
+      - [2, 2023-01-05T00:00:00]
+      - [3, 2023-02-10T00:00:00]
+      - [4, null]
+      - [5, 2023-02-10T12:00:00]
+      - [6, 2022-12-31T00:00:00]
+  relationships: []
+python: |
+  d = T["d"]
+  result = model.evaluate(ADDCOLUMNS(T,
+      'ascDense', RANKX(T, d, order=ASC, ties=DENSE),
+      'ascSkip', RANKX(T, d, order=ASC),
+      'desc', RANKX(T, d),
+      'vsNum', RANKX(T, d, 44941, ASC),
+      'vsDate', RANKX(T, d, DATE(2023, 1, 6), DESC, DENSE)))
+dax: |
+  EVALUATE
+      ADDCOLUMNS(T, "ascDense", RANKX(T, T[d], , ASC, DENSE), "ascSkip", RANKX(T, T[d], , ASC), "desc", RANKX(T, T[d]), "vsNum", RANKX(T, T[d], 44941, ASC), "vsDate", RANKX(T, T[d], DATE(2023, 1, 6), DESC, DENSE))
+expected:
+  ordered: false
+  columns:
+    T[k]: integer
+    T[d]: datetime
+    '[ascDense]': integer
+    '[ascSkip]': integer
+    '[desc]': integer
+    '[vsNum]': integer
+    '[vsDate]': integer
+  rows:
+  - [1, 2023-01-05T00:00:00, 3, 3, 3, 5, 3]
+  - [2, 2023-01-05T00:00:00, 3, 3, 3, 5, 3]
+  - [3, 2023-02-10T00:00:00, 4, 5, 2, 5, 3]
+  - [4, null, 1, 1, 6, 5, 3]
+  - [5, 2023-02-10T12:00:00, 5, 6, 1, 5, 3]
+  - [6, 2022-12-31T00:00:00, 2, 2, 5, 5, 3]

@@ -1,0 +1,70 @@
+id: calculated-columns-transition-unfiltered
+description: >-
+  On a table with no key column, several CALCULATE columns are not a circular dependency when
+  each reads only a table this one can't filter (MxPay, reached only through MxInv's one side),
+  or keeps only some columns with ALLEXCEPT. Power BI's INFO.CALCDEPENDENCY lists only the
+  columns they name.
+source: powerbi
+reference: Power BI Desktop, calculated columns on made-up test data (tables MxTr, MxInv and MxPay in Test Landing)
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    MxInv:
+      columns:
+        INV: string
+        PatID: integer
+      rows:
+      - [a, 1]
+      - [b, 2]
+      - [c, 2]
+    MxTr:
+      columns:
+        INV: string
+        OPT_ID: integer
+        x: decimal
+      rows:
+      - [a, 10, 1]
+      - [a, 20, 2]
+      - [b, 10, 4]
+      - [c, 30, 8]
+    MxPay:
+      columns:
+        INV: string
+        amt: decimal
+      rows:
+      - [a, 10]
+      - [a, 15]
+      - [b, 20]
+  relationships:
+  - from: MxTr[INV]
+    to: MxInv[INV]
+  - from: MxPay[INV]
+    to: MxInv[INV]
+python: |
+  model.add_column(MxTr, "Paid", model.parse_dax("VAR i = MxTr[INV] RETURN CALCULATE(MAX(MxPay[amt]), MxPay[INV] = i)"))
+  model.add_column(MxTr, "Paid2", model.parse_dax("VAR i = MxTr[INV] RETURN CALCULATE(MIN(MxPay[amt]), MxPay[INV] = i)"))
+  model.add_column(MxTr, "InvTotal", model.parse_dax("CALCULATE(SUM(MxTr[x]), ALLEXCEPT(MxTr, MxTr[INV]))"))
+  result = model.evaluate(SUMMARIZECOLUMNS(
+      MxTr["INV"], MxTr["OPT_ID"], MxTr["Paid"], MxTr["Paid2"], MxTr["InvTotal"], {"N": COUNTROWS(MxTr)}
+  ))
+dax: |
+  DEFINE
+      COLUMN MxTr[Paid] = VAR i = MxTr[INV] RETURN CALCULATE(MAX(MxPay[amt]), MxPay[INV] = i)
+      COLUMN MxTr[Paid2] = VAR i = MxTr[INV] RETURN CALCULATE(MIN(MxPay[amt]), MxPay[INV] = i)
+      COLUMN MxTr[InvTotal] = CALCULATE(SUM(MxTr[x]), ALLEXCEPT(MxTr, MxTr[INV]))
+  EVALUATE
+      SUMMARIZECOLUMNS(MxTr[INV], MxTr[OPT_ID], MxTr[Paid], MxTr[Paid2], MxTr[InvTotal], "N", COUNTROWS(MxTr))
+expected:
+  ordered: false
+  columns:
+    MxTr[INV]: string
+    MxTr[OPT_ID]: integer
+    MxTr[Paid]: decimal
+    MxTr[Paid2]: decimal
+    MxTr[InvTotal]: decimal
+    '[N]': integer
+  rows:
+  - [a, 10, 15, 10, 3, 1]
+  - [a, 20, 15, 10, 3, 1]
+  - [b, 10, 20, 20, 4, 1]
+  - [c, 30, null, null, 8, 1]

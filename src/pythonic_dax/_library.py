@@ -300,7 +300,12 @@ def _round(x: int | float | Decimal, digits: int, mode: str, name: str) -> Value
 
 
 def _int(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
-    x = _number(ev.scalar(args[0], ctx), "INT")
+    value = ev.scalar(args[0], ctx)
+    if isinstance(value, bool):  # INT(TRUE()) is 1
+        return int(value)
+    if isinstance(value, str):  # INT("202611") converts the text, as VALUE does
+        value = parse_number(value)
+    x = _number(value, "INT")
     if x is None:
         return None
     if isinstance(x, int):
@@ -590,15 +595,19 @@ def _exact(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
 
 def _containsstring(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
     within = _text(ev.scalar(args[0], ctx))
-    find = _needed_text(ev.scalar(args[1], ctx), "CONTAINSSTRING", "text to find")
-    if within is None:
+    found = ev.scalar(args[1], ctx)
+    find = "" if found is None else _format.to_text(found)  # BLANK finds like ""
+    if not within:  # Power BI: nothing is found in empty text, not even ""
         return False
     return re.search(_wildcards(find), within, re.IGNORECASE | re.DOTALL) is not None
 
 
 def _containsstringexact(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
+    found = ev.scalar(args[1], ctx)
+    find = "" if found is None else _format.to_text(found)
+    if find == "":  # Power BI: empty or BLANK text is found in anything, even BLANK
+        return True
     within = _needed_text(ev.scalar(args[0], ctx), "CONTAINSSTRINGEXACT", "text to search")
-    find = _needed_text(ev.scalar(args[1], ctx), "CONTAINSSTRINGEXACT", "text to find")
     if any(ch in find for ch in "?*~"):
         raise NotSupportedError("CONTAINSSTRINGEXACT with wildcard characters")
     return find in within

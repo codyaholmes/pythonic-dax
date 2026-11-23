@@ -1,0 +1,77 @@
+id: relationship-text-to-number
+description: >-
+  Power BI lets a Text key relate to a Whole Number key, matching the text "1" to the number 1,
+  in either direction. Text with no matching number ("9") and BLANK go to the blank row.
+source: powerbi
+reference: Power BI Desktop, query tool, made-up test data (tables MxLoc, MxAppt, MxEmp and MxTr in Test Landing)
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    MxLoc:
+      columns:
+        locid: integer
+        Name: string
+      rows:
+      - [1, North]
+      - [2, South]
+      - [3, East]
+    MxAppt:
+      columns:
+        ApptID: integer
+        locid: string
+        Qty: integer
+      rows:
+      - [1, '1', 1]
+      - [2, '1', 2]
+      - [3, '2', 4]
+      - [4, '9', 8]
+      - [5, null, 16]
+    MxEmp:
+      columns:
+        EMP_ID: string
+        EmpName: string
+      rows:
+      - ['10', Ann]
+      - ['20', Bob]
+    MxTr:
+      columns:
+        INV: string
+        OPT_ID: integer
+        x: decimal
+      rows:
+      - [a, 10, 1]
+      - [a, 20, 2]
+      - [b, 10, 4]
+      - [c, 30, 8]
+  relationships:
+  - from: MxAppt[locid]
+    to: MxLoc[locid]
+  - from: MxTr[OPT_ID]
+    to: MxEmp[EMP_ID]
+python: |
+  result = model.evaluate(SUMMARIZECOLUMNS(
+      MxLoc["Name"], MxEmp["EmpName"], {"Qty": SUM(MxAppt["Qty"]), "X": SUM(MxTr["x"])}
+  ))
+dax: |
+  EVALUATE
+      SUMMARIZECOLUMNS(MxLoc[Name], MxEmp[EmpName], "Qty", SUM(MxAppt[Qty]), "X", SUM(MxTr[x]))
+expected:
+  ordered: false
+  columns:
+    MxLoc[Name]: string
+    MxEmp[EmpName]: string
+    '[Qty]': integer
+    '[X]': decimal
+  rows:
+  - [null, Ann, 24, 5]
+  - [null, Bob, 24, 2]
+  - [null, null, 24, 8]
+  - [North, Ann, 3, 5]
+  - [North, Bob, 3, 2]
+  - [North, null, 3, 8]
+  - [South, Ann, 4, 5]
+  - [South, Bob, 4, 2]
+  - [South, null, 4, 8]
+  - [East, null, null, 8]
+  - [East, Ann, null, 5]
+  - [East, Bob, null, 2]

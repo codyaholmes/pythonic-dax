@@ -30,7 +30,6 @@ from ._filters import (
     RelationshipState,
     Storage,
     bool_series,
-    normalized,
 )
 from .errors import DaxError, NotSupportedError
 from .expr import (
@@ -587,10 +586,10 @@ class Evaluator:
         """Context transition: each row context becomes a filter on its row's values."""
         filters = ctx.filters
         for row in ctx.rows:  # an inner row context replaces an outer one's filters
-            filters = filters.apply(self._row_filters(row))
+            filters = filters.apply(self._row_filters(row, filters))
         return Context(filters=filters, env=ctx.env if keep_env else {}, shadow=ctx.shadow)
 
-    def _row_filters(self, row: Row) -> list[ColumnFilter]:
+    def _row_filters(self, row: Row, fc: FilterContext) -> list[ColumnFilter]:
         if isinstance(row, RowRef):
             own = self._row_filter(row)
             if row.columns is not None:
@@ -599,7 +598,7 @@ class Evaluator:
             # the related rows on the one side of each relationship are filtered too.
             height = self.storage.ext(row.table).height
             mask = bool_series(height, False).scatter(row.index, True)
-            return [own, *self._expanded_filters(row.table, mask)[1:]]
+            return [own, *self._expanded_filters(row.table, mask, fc)[1:]]
         # A computed row filters each model column it has (its lineage), table by table.
         by_table: dict[int, list[tuple[Column, Value]]] = {}
         for col, value in zip(row.frame.columns, row.frame.rows[row.index], strict=True):
@@ -812,6 +811,7 @@ class Evaluator:
         result; last, the filter arguments are applied. Row contexts end here.
         """
         changes = _Changes()
+        changes.unsure = _modified_relationships(self, filter_args)
         for arg in filter_args:
             self._filter_argument(arg, ctx, changes, keep=False)
 
@@ -845,11 +845,12 @@ class Evaluator:
             if not args:
                 changes.remove_all = True
             else:
-                changes.remove |= {id(c) for c in self._removal_columns(args)}
+                changes.remove |= {id(c) for c in self._removal_columns(args, ctx, changes)}
             return
         if name == "ALLEXCEPT":
             kept = {id(c) for c in args[1:]}
-            changes.remove |= {id(c) for c in self.expanded_columns(args[0]) if id(c) not in kept}
+            expanded = self.expanded_columns(args[0], ctx.filters, changes.unsure)
+            changes.remove |= {id(c) for c in expanded if id(c) not in kept}
             return
         if name == "ALLSELECTED":
             if ctx.shadow is None:
@@ -857,9 +858,13 @@ class Evaluator:
             if not args:
                 changes.restore_all = True
             else:
-                changes.restore.extend(self._removal_columns(args))
+                changes.restore.extend(self._removal_columns(args, ctx, changes))
             return
-        if name == "ALLNOBLANKROW" and not is_column(args[0]) and self._expansion_steps(args[0]):
+        if (
+            name == "ALLNOBLANKROW"
+            and not is_column(args[0])
+            and self._expansion_steps(args[0], ctx.filters, changes.unsure)
+        ):
             # Verified as a plain filter (all rows but the blank one) only for tables
             # that don't expand to other tables.
             raise NotSupportedError("ALLNOBLANKROW of a table on the many side as a filter")
@@ -873,14 +878,15 @@ class Evaluator:
 
         target = changes.keep if keep else changes.overwrite
         if getattr(arg, "kind", None) == "table":
-            new = self.table_filters(self.table(arg, ctx))
+            new = self.table_filters(self.table(arg, ctx), ctx.filters, changes.unsure)
         else:
             new = [self._boolean_filter(arg, ctx)]
         target.extend(new)
         if not keep:
             for f in new:
                 if any(self._clears_table(c) for c in f.columns):
-                    changes.remove |= {id(c) for c in self.expanded_columns(f.table)}
+                    expanded = self.expanded_columns(f.table, ctx.filters, changes.unsure)
+                    changes.remove |= {id(c) for c in expanded}
 
     def _clears_table(self, column: Column) -> bool:
         """Whether a CALCULATE filter on this column also removes the filters on the
@@ -903,10 +909,13 @@ class Evaluator:
             )
         return False
 
-    def _removal_columns(self, args: list[Any]) -> list[Column]:
+    def _removal_columns(self, args: list[Any], ctx: Context, changes: _Changes) -> list[Column]:
         columns: list[Column] = []
         for a in args:
-            columns.extend([a] if is_column(a) else self.expanded_columns(a))
+            if is_column(a):
+                columns.append(a)
+            else:
+                columns.extend(self.expanded_columns(a, ctx.filters, changes.unsure))
         return columns
 
     def _boolean_filter(self, node: Any, ctx: Context) -> ColumnFilter:
@@ -936,7 +945,9 @@ class Evaluator:
         values = combos.filter(hits).select(names)
         return ColumnFilter(table, columns, values)
 
-    def table_filters(self, value: TableValue) -> list[ColumnFilter]:
+    def table_filters(
+        self, value: TableValue, fc: FilterContext, unsure: frozenset[int] = frozenset()
+    ) -> list[ColumnFilter]:
         """The filters a table applies when it is a CALCULATE filter argument.
 
         The rows of a model table filter its expanded table: the table itself and,
@@ -944,7 +955,7 @@ class Evaluator:
         table it reaches (the blank row for keys with no match).
         """
         if isinstance(value, RowSet):
-            return self._expanded_filters(value.table, self._rowset_mask(value))
+            return self._expanded_filters(value.table, self._rowset_mask(value), fc, unsure)
         if not value.filterable:
             raise NotSupportedError("this table expression as a CALCULATE filter")
         lineage = [c.column for c in value.columns]
@@ -965,39 +976,56 @@ class Evaluator:
         )
         return [ColumnFilter(columns[0].table, columns, frame)]
 
-    def _expanded_filters(self, table: Table, mask: pl.Series) -> list[ColumnFilter]:
+    def _expanded_filters(
+        self,
+        table: Table,
+        mask: pl.Series,
+        fc: FilterContext,
+        unsure: frozenset[int] = frozenset(),
+    ) -> list[ColumnFilter]:
         present = self.storage.present_columns(table)
         for c in present:
             self.storage.check_text(c)
         names = [c.name for c in present]
         result = [ColumnFilter(table, present, self.storage.ext(table).filter(mask).select(names))]
-        for many, one in self._expansion_steps(table):
+        for many, one in self._expansion_steps(table, fc, unsure):
             other = one.table
-            self.storage._check_keys(self._relationship(many, one))
-            keys = self.storage.ext(table).filter(mask).select(normalized(many).alias("k"))["k"]
+            rel = self._relationship(many, one)
+            self.storage._check_keys(rel)
+            keys = self.storage.ext(table).filter(mask).select(rel.key(many).alias("k"))["k"]
             one_ext = self.storage.ext(other)
             one_real = self.storage.real_rows(other)
-            one_keys = one_ext.select(normalized(one).alias("k"))["k"]
+            one_keys = one_ext.select(rel.key(one).alias("k"))["k"]
             other_mask = one_keys.is_in(keys.drop_nulls().implode()).fill_null(False) & one_real
             blank = self.storage.blank_index(other)
             if blank is not None:
                 matched = keys.is_in(one_keys.filter(one_real).drop_nulls().implode())
                 if bool((~matched.fill_null(False)).any()):
                     other_mask = other_mask.scatter(blank, True)
-            result.extend(self._expanded_filters(other, other_mask))
+            result.extend(self._expanded_filters(other, other_mask, fc, unsure))
         return result
 
-    def expanded_columns(self, table: Table) -> list[Column]:
+    def expanded_columns(
+        self, table: Table, fc: FilterContext, unsure: frozenset[int] = frozenset()
+    ) -> list[Column]:
         """The columns of a table's expanded table (ALL(<table>) removes all of them)."""
         columns = list(table.columns)
-        for _, one in self._expansion_steps(table):
-            columns.extend(self.expanded_columns(one.table))
+        for _, one in self._expansion_steps(table, fc, unsure):
+            columns.extend(self.expanded_columns(one.table, fc, unsure))
         return columns
 
-    def _expansion_steps(self, table: Table) -> list[tuple[Column, Column]]:
-        """Relationships from ``table`` towards their one side, as (many, one) keys."""
+    def _expansion_steps(
+        self, table: Table, fc: FilterContext, unsure: frozenset[int] = frozenset()
+    ) -> list[tuple[Column, Column]]:
+        """Relationships from ``table`` towards their one side, as (many, one) keys.
+
+        Power BI expands a table only through the relationships that are active in the
+        filter context: an inactive one counts once an outer CALCULATE's
+        USERELATIONSHIP activates it. ``unsure`` holds relationships that a
+        USERELATIONSHIP or CROSSFILTER of the same CALCULATE changes, whose effect on
+        expansion hasn't been checked.
+        """
         steps = []
-        reached = set()
         for rel in self.model.relationships:
             if rel.from_table is not table and rel.to_table is not table:
                 continue
@@ -1006,15 +1034,15 @@ class Evaluator:
                     f"table expansion across a {rel.cardinality.value.replace('_', '-')} "
                     "relationship"
                 )
-            if rel.from_table is table and rel.is_active:
-                steps.append((rel.from_column, rel.to_column))
-                reached.add(id(rel.to_table))
-        for rel in self.model.relationships:
-            if rel.from_table is table and not rel.is_active and id(rel.to_table) not in reached:
+            if rel.from_table is not table:
+                continue
+            if id(rel) in unsure:
                 raise NotSupportedError(
-                    f"table expansion when {table.name} has an inactive relationship to "
-                    f"{rel.to_table.name}"
+                    f"table expansion of {table.name} with a USERELATIONSHIP or CROSSFILTER "
+                    "of its relationships in the same CALCULATE"
                 )
+            if fc.state(rel).active:
+                steps.append((rel.from_column, rel.to_column))
         return steps
 
     def _relationship(self, a: Column, b: Column) -> Relationship:
@@ -1316,6 +1344,15 @@ class _Changes:
     restore_all: bool = False
     use: list[Relationship] = field(default_factory=list)
     cross: list[tuple[Relationship, tuple[Column, str]]] = field(default_factory=list)
+    unsure: frozenset[int] = frozenset()  # relationships this CALCULATE's modifiers change
+
+
+def _modified_relationships(ev: Evaluator, filter_args: Sequence[Any]) -> frozenset[int]:
+    ids = set()
+    for arg in filter_args:
+        if isinstance(arg, ModifierCall) and arg.name in ("USERELATIONSHIP", "CROSSFILTER"):
+            ids.add(id(ev._relationship(arg.args[0], arg.args[1])))  # type: ignore[arg-type]
+    return frozenset(ids)
 
 
 class _NoVector(Exception):
@@ -1553,7 +1590,7 @@ def _lookupvalue(ev: Evaluator, args: list[Any], ctx: Context) -> Value:
     ext = ev.storage.ext(table)
     # Filters on the table's expanded table are ignored, as with REMOVEFILTERS(<table>);
     # filters that reach it through a two-way relationship still apply.
-    filters = ctx.filters.remove({id(c) for c in ev.expanded_columns(table)})
+    filters = ctx.filters.remove({id(c) for c in ev.expanded_columns(table, ctx.filters)})
     visible = ev.storage.visible(table, filters)
     mask = ev.storage.real_rows(table)
     if visible is not None:

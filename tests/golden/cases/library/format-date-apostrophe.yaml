@@ -1,0 +1,35 @@
+id: library-format-date-apostrophe
+description: >-
+  In a FORMAT date format an apostrophe is a plain character, not a quote, so "mmm 'YY" gives
+  "Nov '26" and the codes after it still format.
+source: powerbi
+reference: Power BI Desktop, query tool, no table data
+powerbi_version: Analysis Services engine 17.0.93.23
+model:
+  tables:
+    Customer:
+      columns:
+        CustomerKey: integer
+      rows:
+      - [1]
+  relationships: []
+python: |
+  from pythonic_dax.expr import coerce as c
+  result = model.evaluate(ROW(
+      'a', FORMAT(DATE(c(2026), c(11), c(5)), "mmm 'YY"),
+      'b', FORMAT(DATE(c(2026), c(1), c(5)), "mmm 'yy"),
+      'e', FORMAT(DATE(c(2026), c(1), c(5)), "yyyy'"),
+      'f', FORMAT(DATE(c(2026), c(1), c(5)), "''yy"),
+  ))
+dax: |
+  EVALUATE
+      ROW("a", FORMAT(DATE(2026, 11, 5), "mmm 'YY"), "b", FORMAT(DATE(2026, 1, 5), "mmm 'yy"), "e", FORMAT(DATE(2026, 1, 5), "yyyy'"), "f", FORMAT(DATE(2026, 1, 5), "''yy"))
+expected:
+  ordered: false
+  columns:
+    '[a]': string
+    '[b]': string
+    '[e]': string
+    '[f]': string
+  rows:
+  - ["Nov '26", "Jan '26", "2026'", "''26"]

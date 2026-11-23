@@ -143,6 +143,31 @@ def test_key_column_allows_two_transitions(model: pdax.Model) -> None:
     assert t.data["B"].to_list() == [4.0, 5.0]
 
 
+def test_transitions_that_read_only_unfiltered_tables_are_not_circular() -> None:
+    # Seen in Power BI (INFO.CALCDEPENDENCY): on a table with no key, CALCULATE columns
+    # that read only a table this one can't filter depend only on the columns they
+    # name, and an ALLEXCEPT keeps only its columns, so neither is circular.
+    m = pdax.Model()
+    inv = m.add_table("Inv", pl.DataFrame({"INV": ["a", "b"]}))
+    tr = m.add_table("Tr", pl.DataFrame({"INV": ["a", "a", "b"], "x": [1.0, 2.0, 4.0]}))
+    pay = m.add_table("Pay", pl.DataFrame({"INV": ["a", "b"], "amt": [10.0, 20.0]}))
+    m.add_relationship(tr["INV"], inv["INV"])
+    m.add_relationship(pay["INV"], inv["INV"])
+    m.add_column(
+        tr, "Paid", m.parse_dax("VAR i = Tr[INV] RETURN CALCULATE(MAX(Pay[amt]), Pay[INV] = i)")
+    )
+    m.add_column(
+        tr, "Paid2", m.parse_dax("VAR i = Tr[INV] RETURN CALCULATE(MIN(Pay[amt]), Pay[INV] = i)")
+    )
+    m.add_column(tr, "InvTotal", m.parse_dax("CALCULATE(SUM(Tr[x]), ALLEXCEPT(Tr, Tr[INV]))"))
+    assert tr.data["Paid"].to_list() == [10.0, 10.0, 20.0]
+    assert tr.data["InvTotal"].to_list() == [3.0, 3.0, 4.0]
+    # a transition that reads its own table still depends on every column
+    m.add_column(tr, "Own", m.parse_dax("CALCULATE(SUM(Tr[x]))"))
+    with pytest.raises(pdax.DaxError, match="circular dependency"):
+        m.add_column(tr, "Own2", m.parse_dax("CALCULATE(COUNTROWS(Tr))"))
+
+
 # --- filter context ----------------------------------------------------------------------
 
 
@@ -251,13 +276,15 @@ def test_keepfilters_of_all_is_refused(model: pdax.Model) -> None:
         value(model, expr)
 
 
-def test_expansion_through_an_inactive_relationship_is_refused() -> None:
+def test_expansion_with_userelationship_in_the_same_calculate_is_refused() -> None:
     m = pdax.Model()
     region = m.add_table("Region", pl.DataFrame({"R": [1, 2]}))
     store = m.add_table("Store", pl.DataFrame({"S": [1], "R": [1], "R2": [2]}))
     m.add_relationship(store["R2"], region["R"], active=False)
-    expr = pdax.CALCULATE(COUNTROWS(region), pdax.REMOVEFILTERS(store))
-    with pytest.raises(pdax.NotSupportedError, match="inactive relationship"):
+    expr = pdax.CALCULATE(
+        COUNTROWS(region), pdax.REMOVEFILTERS(store), pdax.USERELATIONSHIP(store["R2"], region["R"])
+    )
+    with pytest.raises(pdax.NotSupportedError, match="same CALCULATE"):
         m.evaluate(ROW("v", expr))
 
 
