@@ -699,6 +699,12 @@ assert shop.value("Total Sales") == 37.5  # 1 x 10 + 2 x 5.5 + 3 x 5.5
 * **`measures=False`** leaves out the measures, so you can write your own on the
   imported tables. Measures that a calculated column or calculated table uses are kept,
   and `model.import_notes` names them.
+  A list of names, such as `measures=["Total Sales"]`, keeps those measures and the
+  ones they use.
+* **`calculated_columns=False`** leaves out the calculated columns, for rebuilding
+  them yourself. A measure that reads one still imports and raises `NotSupportedError`
+  when it's used, and relationships, sort-by columns and hierarchies that need one are
+  left out, each named in `model.import_notes`.
 * **Refused rather than guessed:** calculation groups, DirectQuery tables, many-to-many
   relationships and DAX user-defined functions. A measure that uses something
   unsupported still imports and raises `NotSupportedError` when it's used.
