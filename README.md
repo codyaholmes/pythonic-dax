@@ -330,7 +330,8 @@ model.evaluate_dax('EVALUATE SUMMARIZECOLUMNS(Product[Color], "Sales", [Sales Am
   `NotSupportedError` when used, and is listed in `model.import_notes`. `overrides=`
   replaces any measure, calculated column or calculated table with Python or other
   DAX, `skip_tables=` leaves tables out, and `measures=False` keeps only the measures that
-  calculated columns and tables use. Roles and perspectives are read but not
+  calculated columns and tables use (or pass a list of measures to keep), and
+  `calculated_columns=False` leaves the calculated columns out. Roles and perspectives are read but not
   applied, and the hidden automatic date tables are left out.
 
 **Format strings for Streamlit.** `streamlit_format` turns a DAX format string into the

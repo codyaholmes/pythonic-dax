@@ -313,3 +313,56 @@ def test_measures_can_be_left_out() -> None:
     assert any("left out" in n and "Total Sales" in n for n in model.import_notes)
     product = model.table("Product")
     assert model.evaluate(product).equals(full.evaluate(full.table("Product")))
+
+
+def test_calculated_columns_can_be_left_out() -> None:
+    model = pdax.from_tmdl(TMDL, data=data(), calculated_columns=False)
+    assert "Line Total" not in model.table("Sales")
+    assert "Product Sales" not in model.table("Product")
+    assert "left out 2 calculated columns, as asked" in model.import_notes
+    assert model.value(model["Units"]) == 15
+    # [Total Sales] = SUM(Sales[Line Total]) still imports, and refuses when used.
+    with pytest.raises(NotSupportedError, match=r"left out with calculated_columns=False"):
+        model.value(model["Total Sales"])
+
+
+def test_only_named_measures_are_kept() -> None:
+    model = pdax.from_tmdl(TMDL, data=data(), measures=["red share"], calculated_columns=False)
+    # [Red Share] uses [Total Sales], so that one is kept too.
+    assert sorted(m.name for m in model.measures) == ["Red Share", "Total Sales"]
+    assert any("kept 2, the ones named and those they use" in n for n in model.import_notes)
+    with pytest.raises(ModelError, match="doesn't have"):
+        pdax.from_tmdl(TMDL, data=data(), measures=["Nope"])
+    with pytest.raises(TypeError):
+        pdax.from_tmdl(TMDL, data=data(), measures="Units")  # type: ignore[arg-type]
+
+
+def test_left_out_columns_drop_what_needs_them() -> None:
+    raw = spec()
+    tables = {t["name"]: t for t in raw["model"]["tables"]}
+    sales = tables["Sales"]
+    sales["columns"].append(
+        {
+            "name": "Key2",
+            "type": "calculated",
+            "dataType": "int64",
+            "expression": "Sales[ProductKey]",
+        }
+    )
+    qty = next(c for c in sales["columns"] if c["name"] == "Qty")
+    qty["sortByColumn"] = "Key2"
+    raw["model"]["relationships"].append(
+        {
+            "name": "r9",
+            "fromTable": "Sales",
+            "fromColumn": "Key2",
+            "toTable": "Product",
+            "toColumn": "ProductKey",
+            "isActive": False,
+        }
+    )
+    model = build(raw, data(), calculated_columns=False)
+    assert model.table("Sales")["Qty"].sort_by_column is None
+    plain = build(spec(), data(), calculated_columns=False)
+    assert len(model.relationships) == len(plain.relationships)
+    assert any("left out the relationship" in n and "Key2" in n for n in model.import_notes)

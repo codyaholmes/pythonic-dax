@@ -76,7 +76,8 @@ def from_tmdl(
     culture: str | None = None,
     skip_tables: Sequence[str] = (),
     overrides: Mapping[str, Any] | None = None,
-    measures: bool = True,
+    measures: bool | Sequence[str] = True,
+    calculated_columns: bool = True,
 ) -> Model:
     """Build a model from a TMDL folder (a ``.SemanticModel`` folder or its ``definition``).
 
@@ -87,8 +88,15 @@ def from_tmdl(
     or a calculated table (by name) with a Python expression or other DAX text.
     ``measures=False`` leaves out the measures, except those a calculated column or
     calculated table uses, for writing your own; ``import_notes`` lists the ones kept.
+    A list of names keeps those measures and the ones they use.
+    ``calculated_columns=False`` leaves out the calculated columns. A measure that reads
+    one still imports and raises :class:`NotSupportedError` when it's used, and a
+    relationship, sort-by column or hierarchy that needs one is left out too.
     """
-    return build(_tmdl.read_folder(path), data, culture, skip_tables, overrides, measures)
+    return build(
+        _tmdl.read_folder(path), data, culture, skip_tables, overrides, measures,
+        calculated_columns,
+    )  # fmt: skip
 
 
 def from_bim(
@@ -98,12 +106,13 @@ def from_bim(
     culture: str | None = None,
     skip_tables: Sequence[str] = (),
     overrides: Mapping[str, Any] | None = None,
-    measures: bool = True,
+    measures: bool | Sequence[str] = True,
+    calculated_columns: bool = True,
 ) -> Model:
     """Build a model from a ``model.bim`` file (the JSON model of Analysis Services and
     older Power BI projects). The options are the same as :func:`from_tmdl`."""
     raw = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    return build(raw, data, culture, skip_tables, overrides, measures)
+    return build(raw, data, culture, skip_tables, overrides, measures, calculated_columns)
 
 
 # --- building ----------------------------------------------------------------------
@@ -115,13 +124,16 @@ def build(
     culture: str | None = None,
     skip_tables: Sequence[str] = (),
     overrides: Mapping[str, Any] | None = None,
-    measures: bool = True,
+    measures: bool | Sequence[str] = True,
+    calculated_columns: bool = True,
 ) -> Model:
     """Build a model from a ``model.bim`` style dictionary."""
     spec = raw.get("model", raw)
     if not isinstance(spec, dict) or "tables" not in spec:
         raise ModelError("this isn't a semantic model: it has no tables")
-    return _Importer(spec, data, culture, skip_tables, overrides or {}, measures).run()
+    return _Importer(
+        spec, data, culture, skip_tables, overrides or {}, measures, calculated_columns
+    ).run()
 
 
 class _Importer:
@@ -132,10 +144,18 @@ class _Importer:
         culture: str | None,
         skip_tables: Sequence[str],
         overrides: Mapping[str, Any],
-        measures: bool = True,
+        measures: bool | Sequence[str] = True,
+        calculated_columns: bool = True,
     ) -> None:
         self.spec = spec
-        self.keep_measures = measures
+        if isinstance(measures, str):
+            raise TypeError("measures must be True, False or a list of measure names")
+        # True keeps every measure; otherwise the names kept (their dependencies follow)
+        self.keep_measures: bool | set[str] = (
+            measures if isinstance(measures, bool) else {_key(m) for m in measures}
+        )
+        self.keep_columns = calculated_columns
+        self.left_out_columns: dict[str, str] = {}  # "t[c]" folded: "Table[Column]"
         self.data = data
         self.culture = culture
         self.overrides = {_key(k): v for k, v in overrides.items()}
@@ -179,28 +199,42 @@ class _Importer:
                 self.pending[("table", table["name"].casefold())] = (table, None)
             for column in table.get("columns", []):
                 if column.get("type") == "calculated":
-                    ref = f"{table['name']}[{column['name']}]".casefold()
-                    self.pending[("column", ref)] = (column, table)
+                    label = f"{table['name']}[{column['name']}]"
+                    if self.keep_columns:
+                        self.pending[("column", label.casefold())] = (column, table)
+                    else:
+                        self.left_out_columns[label.casefold()] = label
+                        if _key(label) in self.overrides:
+                            self.used_overrides.add(_key(label))
             for measure in table.get("measures", []):
                 self.pending[("measure", measure["name"].casefold())] = (measure, table)
 
+        if self.left_out_columns:
+            self.notes.append(f"left out {len(self.left_out_columns)} calculated columns, as asked")
+        if isinstance(self.keep_measures, set):
+            known = {k[1] for k in self.pending if k[0] == "measure"}
+            unknown = sorted(self.keep_measures - known)
+            if unknown:
+                raise ModelError(f"measures names measures the model doesn't have: {unknown}")
         self.relationships = [r for r in self.spec.get("relationships", []) if self._keep(r)]
         self._add_ready_relationships()
         for pending in list(self.pending):
-            if pending in self.pending and (self.keep_measures or pending[0] != "measure"):
+            if pending in self.pending and self._wanted(pending):
                 self._build(pending)
-        if not self.keep_measures:
+        if self.keep_measures is not True:
             left_out = [k for k in self.pending if k[0] == "measure"]
             for key in left_out:
                 item = self.pending.pop(key)[0]
                 if _key(item["name"]) in self.overrides:
                     self.used_overrides.add(_key(item["name"]))
             kept = sorted(m.name for m in self.model._measures)
-            self.notes.append(
-                f"left out {len(left_out)} measures, as asked"
-                + (f"; kept {len(kept)} that calculated objects use: {kept}" if kept else "")
-            )
+            if self.keep_measures is False:
+                detail = f"; kept {len(kept)} that calculated objects use: {kept}" if kept else ""
+            else:
+                detail = f"; kept {len(kept)}, the ones named and those they use"
+            self.notes.append(f"left out {len(left_out)} measures, as asked{detail}")
         self._add_ready_relationships()
+        self._drop_relationships_on_left_out_columns()
         if self.relationships:
             names = [_rel_label(r) for r in self.relationships]
             raise ModelError(f"relationships whose columns don't exist: {names}")
@@ -212,6 +246,26 @@ class _Importer:
         if unused:
             raise ModelError(f"overrides name objects the model doesn't have: {sorted(unused)}")
         return self.model
+
+    def _wanted(self, key: tuple[str, str]) -> bool:
+        if key[0] != "measure" or self.keep_measures is True:
+            return True
+        return self.keep_measures is not False and key[1] in self.keep_measures
+
+    def _drop_relationships_on_left_out_columns(self) -> None:
+        kept = []
+        for rel in self.relationships:
+            ends = [f"{rel[f'{s}Table']}[{rel[f'{s}Column']}]" for s in ("from", "to")]
+            missing = [self.left_out_columns[e.casefold()] for e in ends
+                       if e.casefold() in self.left_out_columns]  # fmt: skip
+            if missing:
+                self.notes.append(
+                    f"left out the relationship {_rel_label(rel)}: it uses the calculated "
+                    f"column {missing[0]}, which was left out"
+                )
+            else:
+                kept.append(rel)
+        self.relationships = kept
 
     def _in_spec(self, name: str) -> bool:
         return any(t["name"].casefold() == name for t in self.spec["tables"])
@@ -354,6 +408,11 @@ class _Importer:
 
     def column(self, table: Table, name: str) -> Column | None:
         key = ("column", f"{table.name}[{name}]".casefold())
+        if key[1] in self.left_out_columns:
+            raise NotSupportedError(
+                "reading a calculated column left out with calculated_columns=False "
+                f"({self.left_out_columns[key[1]]})"
+            )
         if key in self.pending:
             self._build(key)
         elif key in self.building_keys:
@@ -523,9 +582,22 @@ class _Importer:
         for c in item.get("columns", []):
             sort_by = c.get("sortByColumn")
             if sort_by and c["name"] in table:
+                if sort_by not in table:
+                    self.notes.append(
+                        f"{table.name}[{c['name']}] isn't sorted by {sort_by}: that "
+                        "calculated column was left out"
+                    )
+                    continue
                 table[c["name"]].sort_by_column = table[sort_by]
         for h in item.get("hierarchies", []):
             levels = sorted(h.get("levels", []), key=lambda lv: lv.get("ordinal", 0))
+            gone = [lv["column"] for lv in levels if lv["column"] not in table]
+            if gone and self.left_out_columns:
+                self.notes.append(
+                    f"left out the hierarchy {table.name}[{h['name']}]: it uses the "
+                    f"calculated column {gone[0]}, which was left out"
+                )
+                continue
             table.add_hierarchy(
                 h["name"],
                 [(lv["name"], lv["column"]) for lv in levels],
